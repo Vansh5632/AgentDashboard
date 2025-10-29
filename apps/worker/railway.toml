@@ -1,0 +1,7 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "cd ../.. && pnpm install --frozen-lockfile && cd packages/db && pnpm exec prisma generate && cd ../../apps/worker && pnpm build"
+
+[deploy]
+startCommand = "cd apps/worker && pnpm start"
+restartPolicyType = "ON_FAILURE"

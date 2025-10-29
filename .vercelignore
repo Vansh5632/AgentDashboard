@@ -1,0 +1,11 @@
+node_modules
+.env.local
+.env
+*.log
+.DS_Store
+apps/api
+apps/worker
+packages/db/migrations
+docker-compose.yml
+*.sh
+examples

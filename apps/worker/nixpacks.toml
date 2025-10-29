@@ -1,0 +1,22 @@
+# Nixpacks configuration for Railway deployment
+providers = ["node"]
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "pnpm"]
+
+[phases.install]
+cmds = [
+  "pnpm install --frozen-lockfile"
+]
+
+[phases.build]
+cmds = [
+  "cd packages/db && pnpm exec prisma generate",
+  "cd ../../apps/worker && pnpm build"
+]
+
+[start]
+cmd = "cd apps/worker && pnpm start"
+
+[variables]
+NODE_ENV = "production"

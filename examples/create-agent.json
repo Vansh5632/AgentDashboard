@@ -1,0 +1,43 @@
+{
+  "description": "Create a new agent after signup",
+  "endpoint": "POST /api/agents",
+  "headers": {
+    "Content-Type": "application/json",
+    "x-tenant-id": "YOUR_TENANT_ID_FROM_SIGNUP"
+  },
+  "body": {
+    "name": "Technical Support Agent",
+    "elevenLabsAgentId": "agent_ghi789jkl",
+    "phoneNumber": "+15551112222",
+    "persona": "You are a technical support specialist for ACME Corporation with expertise in troubleshooting software and hardware issues. You are patient, methodical, and always gather sufficient information before suggesting solutions. You can walk customers through step-by-step troubleshooting procedures."
+  },
+  "expectedResponse": {
+    "message": "Agent created successfully",
+    "agent": {
+      "id": "club345mno...",
+      "name": "Technical Support Agent",
+      "elevenLabsAgentId": "agent_ghi789jkl",
+      "phoneNumber": "+15551112222",
+      "persona": "You are a technical support specialist..."
+    }
+  },
+  "requiredFields": {
+    "name": "Display name for the agent (string, required)",
+    "elevenLabsAgentId": "The agent_id from ElevenLabs dashboard (string, required)",
+    "persona": "System prompt/instructions for the AI agent (string, optional, defaults to generic assistant)",
+    "phoneNumber": "Phone number in E.164 format (string, optional, must be unique)"
+  },
+  "howToGetElevenLabsAgentId": [
+    "1. Log in to elevenlabs.io",
+    "2. Go to Conversational AI section",
+    "3. Create a new agent or select existing agent",
+    "4. In agent settings, find the Agent ID (format: agent_...)",
+    "5. Copy this ID and use it as elevenLabsAgentId in the API request"
+  ],
+  "notes": [
+    "This endpoint requires authentication - use x-tenant-id header (temporary until JWT middleware is added)",
+    "The elevenLabsAgentId is actually stored in database as elevenLabsVoiceId field (naming will be updated)",
+    "This is the ID that ElevenLabs will send in webhooks to identify which agent handled the call",
+    "Make sure the agent exists in your ElevenLabs account before creating it here"
+  ]
+}

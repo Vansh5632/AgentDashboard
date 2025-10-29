@@ -1,0 +1,56 @@
+{
+  "description": "Complete signup example with ElevenLabs agent configuration",
+  "endpoint": "POST /api/auth/signup",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "email": "john@company.com",
+    "password": "SecurePassword123!",
+    "tenantName": "ACME Corporation",
+    "elevenLabsApiKey": "sk_1234567890abcdef_YOUR_ACTUAL_KEY_HERE",
+    "agents": [
+      {
+        "name": "Customer Support Agent",
+        "elevenLabsAgentId": "agent_abc123xyz",
+        "phoneNumber": "+15551234567",
+        "persona": "You are a friendly and professional customer support agent for ACME Corporation. You help customers with product inquiries, troubleshooting, and general questions. Always be polite, patient, and provide accurate information. If you don't know something, offer to escalate to a human agent."
+      },
+      {
+        "name": "Sales Agent",
+        "elevenLabsAgentId": "agent_def456uvw",
+        "phoneNumber": "+15559876543",
+        "persona": "You are an enthusiastic sales representative for ACME Corporation. Your goal is to understand customer needs and recommend appropriate products or services. Be consultative, not pushy. Ask qualifying questions to better understand what the customer is looking for."
+      }
+    ]
+  },
+  "expectedResponse": {
+    "message": "User created successfully",
+    "userId": "cltx123abc...",
+    "tenantId": "clty456def...",
+    "agents": [
+      {
+        "id": "cltz789ghi...",
+        "name": "Customer Support Agent",
+        "elevenLabsVoiceId": "agent_abc123xyz",
+        "phoneNumber": "+15551234567"
+      },
+      {
+        "id": "clua012jkl...",
+        "name": "Sales Agent",
+        "elevenLabsVoiceId": "agent_def456uvw",
+        "phoneNumber": "+15559876543"
+      }
+    ],
+    "setupComplete": true
+  },
+  "notes": [
+    "elevenLabsAgentId should be the actual agent_id from your ElevenLabs dashboard",
+    "phoneNumber is optional but required if you want to receive inbound calls",
+    "Phone numbers must be in E.164 format (e.g., +15551234567)",
+    "Each phone number must be unique across all agents in your account",
+    "The elevenLabsApiKey will be stored securely (encrypted in production)",
+    "You can create multiple agents during signup or add them later",
+    "setupComplete will be true only if you provide an API key and at least one valid agent_id"
+  ]
+}

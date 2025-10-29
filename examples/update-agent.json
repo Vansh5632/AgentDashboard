@@ -1,0 +1,29 @@
+{
+  "description": "Update an existing agent's configuration",
+  "endpoint": "PUT /api/agents/:agentId",
+  "headers": {
+    "Content-Type": "application/json",
+    "x-tenant-id": "YOUR_TENANT_ID"
+  },
+  "pathParams": {
+    "agentId": "The ID of the agent to update (from database, e.g., 'clua012jkl...')"
+  },
+  "body": {
+    "name": "Updated Agent Name",
+    "elevenLabsAgentId": "agent_new_id_123",
+    "phoneNumber": "+15553334444",
+    "persona": "Updated persona with new instructions for the AI agent..."
+  },
+  "notes": [
+    "All fields are optional - only include fields you want to update",
+    "If you change elevenLabsAgentId, make sure the new agent exists in ElevenLabs",
+    "Changing phoneNumber to null removes the phone number from the agent",
+    "Phone number must be unique across all agents"
+  ],
+  "examplePartialUpdate": {
+    "description": "Update only the persona",
+    "body": {
+      "persona": "You are now a more casual and friendly agent. Use a conversational tone and feel free to use light humor when appropriate."
+    }
+  }
+}

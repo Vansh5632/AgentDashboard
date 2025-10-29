@@ -1,0 +1,30 @@
+{
+  "name": "worker",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/worker.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only worker.ts",
+    "build": "tsc",
+    "start": "node dist/worker.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.18.3",
+  "dependencies": {
+    "@ai_agent/db": "workspace:*",
+    "@pinecone-database/pinecone": "^6.1.2",
+    "axios": "^1.12.2",
+    "bullmq": "^5.61.0",
+    "dotenv": "^17.2.3",
+    "ioredis": "^5.8.1",
+    "openai": "^6.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.8.0",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}
