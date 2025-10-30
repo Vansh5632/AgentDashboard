@@ -1,18 +1,45 @@
+# Dependencies (will be installed in container)
 node_modules
-.env.local
+.pnpm-store
+
+# Environment files
 .env
-*.log
-.DS_Store
-apps/web
-*.md
+.env.local
+.env.production
+.env.development
+
+# Git
 .git
 .gitignore
+.github
+
+# Build outputs (will be generated in container)
 dist
-coverage
+build
+.next
+out
+
+# Documentation
+*.md
+README.md
+
+# IDE
 .vscode
 .idea
-.next
-.vercel
+*.swp
+*.swo
+
+# Logs
+*.log
+logs
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage
+.nyc_output
+
+# Examples
 examples
-*.sh
-docker-compose.yml
