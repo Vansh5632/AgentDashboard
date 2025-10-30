@@ -224,7 +224,7 @@ router.get('/calls/stats/overview', authenticate, async (req: Request, res: Resp
         successRate: totalCalls > 0 ? ((completedCalls / totalCalls) * 100).toFixed(1) : '0',
         avgCallDuration: avgDuration._avg.callDuration ? Math.round(avgDuration._avg.callDuration) : 0,
       },
-      dailyVolume: dailyCalls.map(row => ({
+      dailyVolume: dailyCalls.map((row: { date: string; count: bigint }) => ({
         date: row.date,
         count: Number(row.count),
       })),
