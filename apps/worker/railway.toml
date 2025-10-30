@@ -1,0 +1,9 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/worker/Dockerfile"
+# Build context is the repository root so Dockerfile can access all workspace files
+
+[deploy]
+startCommand = "node apps/worker/dist/worker.js"
+restartPolicyType = "ON_FAILURE"
+# Worker doesn't have HTTP health checks
