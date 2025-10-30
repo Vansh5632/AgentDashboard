@@ -1,9 +1,10 @@
 [build]
-builder = "NIXPACKS"
-buildCommand = "cd ../.. && pnpm install --frozen-lockfile && cd packages/db && pnpm exec prisma generate && cd ../../apps/api && pnpm build"
+builder = "DOCKERFILE"
+dockerfilePath = "apps/api/Dockerfile"
+# Build context is the repository root so Dockerfile can access all workspace files
 
 [deploy]
-startCommand = "cd ../.. && pnpm run migrate:deploy && cd apps/api && pnpm start"
+startCommand = "cd packages/db && npx prisma migrate deploy && cd ../../apps/api && node dist/server.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
