@@ -16,7 +16,7 @@ import callsRouter from './routes/calls';
 
 const prisma = new PrismaClient();
 const app: Express = express();
-const PORT = process.env.PORT || 3001;
+const PORT = parseInt(process.env.PORT || '3001', 10);
 
 // CORS Configuration
 const allowedOrigins = process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3000'];
@@ -50,6 +50,6 @@ app.use("/api", meetingsRouter);
 app.use("/api", callsRouter);
 
 // Start the server
-app.listen(PORT, () => {
+app.listen(PORT,'0.0.0.0', () => {
   console.log(`🚀 Server is running on http://localhost:${PORT}`);
 });
