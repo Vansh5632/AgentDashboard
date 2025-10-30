@@ -16,15 +16,17 @@ FROM node:20-alpine AS builder
 RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 
-# Copy dependencies from deps stage
+# Copy dependencies and workspace config from deps stage
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages ./packages
 COPY --from=deps /app/apps/worker/node_modules ./apps/worker/node_modules
+COPY --from=deps /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
+COPY --from=deps /app/package.json ./package.json
+COPY --from=deps /app/pnpm-lock.yaml ./pnpm-lock.yaml
 
-# Copy source code
+# Copy source code (only these come from build context)
 COPY packages/db ./packages/db
 COPY apps/worker ./apps/worker
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 
 # Generate Prisma Client
 RUN cd packages/db && pnpm exec prisma generate
