@@ -4,7 +4,8 @@ dockerfilePath = "apps/api/Dockerfile"
 # Build context is the repository root so Dockerfile can access all workspace files
 
 [deploy]
-startCommand = "node apps/api/dist/server.js"
+# The start.sh script runs migrations before starting the server
+startCommand = "/app/start.sh"
 healthcheckPath = "/health"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"

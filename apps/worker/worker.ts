@@ -15,10 +15,38 @@ const prisma = new PrismaClient();
 // Cal.com API base URL
 const CALCOM_API_BASE = process.env.CALCOM_API_BASE_URL || 'https://api.cal.com/v1';
 
-const redisConnection = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379'),
-};
+// Redis connection configuration
+// Supports both REDIS_URL (Railway format) and individual host/port/password
+function getRedisConnection() {
+  if (process.env.REDIS_URL) {
+    // Parse Redis URL (format: redis://username:password@host:port or redis://host:port)
+    const url = new URL(process.env.REDIS_URL);
+    return {
+      host: url.hostname,
+      port: parseInt(url.port) || 6379,
+      password: url.password || undefined,
+      maxRetriesPerRequest: 3,
+      retryStrategy(times: number) {
+        const delay = Math.min(times * 50, 2000);
+        return delay;
+      },
+    };
+  }
+  
+  // Fall back to individual environment variables
+  return {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: parseInt(process.env.REDIS_PORT || '6379'),
+    password: process.env.REDIS_PASSWORD || undefined,
+    maxRetriesPerRequest: 3,
+    retryStrategy(times: number) {
+      const delay = Math.min(times * 50, 2000);
+      return delay;
+    },
+  };
+}
+
+const redisConnection = getRedisConnection();
 
 console.log('Worker is starting...');
 console.log(`Redis connection: ${redisConnection.host}:${redisConnection.port}`);

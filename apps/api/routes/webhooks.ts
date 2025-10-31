@@ -7,10 +7,37 @@ const router = Router();
 const prisma = new PrismaClient();
 
 // 1. Create a connection to Redis
-const redisConnection = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379'),
-};
+// Supports both REDIS_URL (Railway format) and individual host/port/password
+function getRedisConnection() {
+  if (process.env.REDIS_URL) {
+    // Parse Redis URL (format: redis://username:password@host:port or redis://host:port)
+    const url = new URL(process.env.REDIS_URL);
+    return {
+      host: url.hostname,
+      port: parseInt(url.port) || 6379,
+      password: url.password || undefined,
+      maxRetriesPerRequest: 3,
+      retryStrategy(times: number) {
+        const delay = Math.min(times * 50, 2000);
+        return delay;
+      },
+    };
+  }
+  
+  // Fall back to individual environment variables
+  return {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: parseInt(process.env.REDIS_PORT || '6379'),
+    password: process.env.REDIS_PASSWORD || undefined,
+    maxRetriesPerRequest: 3,
+    retryStrategy(times: number) {
+      const delay = Math.min(times * 50, 2000);
+      return delay;
+    },
+  };
+}
+
+const redisConnection = getRedisConnection();
 
 // 2. Define our queue. The name 'call-processing' is important!
 const callProcessingQueue = new Queue('call-processing', { connection: redisConnection });
