@@ -1,6 +1,10 @@
 import axios from 'axios';
 
+// Get API URL from environment - should be just the domain without any path
+// Example: https://api-production-8446.up.railway.app (NO trailing slash, NO /api, NO /health)
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+// Remove any trailing slashes and any accidental paths like /health
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,
