@@ -19,13 +19,23 @@ const app: Express = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
 // CORS Configuration
-const allowedOrigins = process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3000'];
+const allowedOrigins = process.env.CORS_ORIGINS?.split(',') || [
+  'http://localhost:3000',
+  'https://web-production-af51.up.railway.app'
+];
+
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps, curl, etc.)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.includes(origin)) {
+    // In development, allow all origins
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
+    // Check if origin is in allowed list or matches Railway pattern
+    if (allowedOrigins.includes(origin) || origin?.includes('.railway.app')) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
