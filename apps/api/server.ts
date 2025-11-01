@@ -64,11 +64,15 @@ app.use((req, res, next) => {
   next();
 });
 
-// Explicit OPTIONS handler for all routes (handles CORS preflight)
-app.options("*", (req: Request, res: Response) => {
-  console.log(`OPTIONS request for: ${req.path}`);
-  console.log(`Origin: ${req.get('origin')}`);
-  res.sendStatus(204);
+// Explicit OPTIONS handler for preflight requests (handles CORS)
+// Note: Using middleware instead of app.options("*") for Express 5.x compatibility
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    console.log(`OPTIONS request for: ${req.path}`);
+    console.log(`Origin: ${req.get('origin')}`);
+    return res.sendStatus(204);
+  }
+  next();
 });
 
 // Public Routes
