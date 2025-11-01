@@ -2,11 +2,10 @@
 builder = "DOCKERFILE"
 dockerfilePath = "apps/api/Dockerfile"
 dockerContext = "./"
-# Build context is the repository root so Dockerfile can access all workspace files
 
 [deploy]
-# The start.sh script runs migrations before starting the server
-startCommand = "/app/start.sh"
+# Dockerfile ENTRYPOINT handles migrations and server startup automatically
+# No need for startCommand - Docker ENTRYPOINT will be used
 healthcheckPath = "/health"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
