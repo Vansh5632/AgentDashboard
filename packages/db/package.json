@@ -5,7 +5,9 @@
   "main": "index.ts",
   "types": "index.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "postinstall": "prisma generate --schema=./schema.prisma",
+    "postdeploy":"prisma migrate deploy"
   },
   "keywords": [],
   "author": "",
