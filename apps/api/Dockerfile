@@ -60,8 +60,8 @@ COPY --from=builder /app/packages/db ./packages/db
 # Generate Prisma Client again in production
 RUN cd packages/db && npx prisma generate
 
-# Copy startup script
-COPY apps/api/start.sh /app/start.sh
+# Copy startup script from builder stage
+COPY --from=builder /app/apps/api/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 EXPOSE 3001

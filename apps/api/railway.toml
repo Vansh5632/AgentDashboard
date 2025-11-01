@@ -1,6 +1,7 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "apps/api/Dockerfile"
+dockerContext = "./"
 # Build context is the repository root so Dockerfile can access all workspace files
 
 [deploy]
