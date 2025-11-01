@@ -76,15 +76,6 @@ app.get("/health", (req: Request, res: Response) => {
   res.json({ status: "ok" });
 });
 
-// Explicit OPTIONS handler for debugging
-app.options(/.*/, (req: Request, res: Response) => {
-  console.log(`OPTIONS request for: ${req.path}`);
-  console.log(`Origin: ${req.get('origin')}`);
-  console.log(`Access-Control-Request-Method: ${req.get('access-control-request-method')}`);
-  console.log(`Access-Control-Request-Headers: ${req.get('access-control-request-headers')}`);
-  res.sendStatus(204);
-});
-
 // API Routes
 app.use("/api", authRouter);
 app.use("/api", userRouter);
