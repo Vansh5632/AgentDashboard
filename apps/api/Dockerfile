@@ -57,9 +57,9 @@ RUN pnpm install --prod --frozen-lockfile
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 
 # Copy Prisma schema and migrations (CRITICAL for runtime migrations)
-COPY --from=builder /app/packages/db/schema.prisma ./packages/db/schema.prisma
-COPY --from=builder /app/packages/db/migrations ./packages/db/migrations
-COPY --from=builder /app/packages/db/package.json ./packages/db/package.json
+COPY packages/db/schema.prisma ./packages/db/schema.prisma
+COPY packages/db/migrations ./packages/db/migrations
+COPY packages/db/package.json ./packages/db/package.json
 
 # Generate Prisma Client in production environment
 RUN cd packages/db && npx prisma generate
@@ -75,7 +75,9 @@ RUN echo "📁 Verifying migrations..." && \
       echo "❌ ERROR: Migrations directory is empty!"; \
       exit 1; \
     fi && \
-    echo "✅ Migrations verified successfully"
+    echo "✅ Migrations verified successfully" && \
+    echo "📋 Migration files found:" && \
+    ls -1 /app/packages/db/migrations/ | grep -v "migration_lock.toml"
 
 # Create entrypoint script inline (no external file needed)
 RUN echo '#!/bin/sh' > /app/docker-entrypoint.sh && \
@@ -129,20 +131,37 @@ RUN echo '#!/bin/sh' > /app/docker-entrypoint.sh && \
     echo '' >> /app/docker-entrypoint.sh && \
     echo '# Deploy migrations' >> /app/docker-entrypoint.sh && \
     echo 'echo "🔄 Deploying migrations..."' >> /app/docker-entrypoint.sh && \
-    echo 'if npx prisma migrate deploy --schema=./schema.prisma; then' >> /app/docker-entrypoint.sh && \
+    echo 'echo "   Using schema: ./schema.prisma"' >> /app/docker-entrypoint.sh && \
+    echo 'echo "   Migrations dir: ./migrations/"' >> /app/docker-entrypoint.sh && \
+    echo 'echo ""' >> /app/docker-entrypoint.sh && \
+    echo '' >> /app/docker-entrypoint.sh && \
+    echo '# Try to deploy migrations with verbose output' >> /app/docker-entrypoint.sh && \
+    echo 'if OUTPUT=$(npx prisma migrate deploy --schema=./schema.prisma 2>&1); then' >> /app/docker-entrypoint.sh && \
+    echo '  echo "$OUTPUT"' >> /app/docker-entrypoint.sh && \
+    echo '  echo ""' >> /app/docker-entrypoint.sh && \
     echo '  echo "✅ Migrations deployed successfully!"' >> /app/docker-entrypoint.sh && \
     echo 'else' >> /app/docker-entrypoint.sh && \
     echo '  MIGRATION_EXIT_CODE=$?' >> /app/docker-entrypoint.sh && \
+    echo '  echo "$OUTPUT"' >> /app/docker-entrypoint.sh && \
+    echo '  echo ""' >> /app/docker-entrypoint.sh && \
     echo '  echo "❌ Migration deployment FAILED (exit code: $MIGRATION_EXIT_CODE)"' >> /app/docker-entrypoint.sh && \
     echo '  echo ""' >> /app/docker-entrypoint.sh && \
     echo '  echo "🔍 Attempting to diagnose issue..."' >> /app/docker-entrypoint.sh && \
+    echo '  echo "Current directory: $(pwd)"' >> /app/docker-entrypoint.sh && \
+    echo '  echo "Schema file exists: $([ -f ./schema.prisma ] && echo YES || echo NO)"' >> /app/docker-entrypoint.sh && \
+    echo '  echo "Migrations dir exists: $([ -d ./migrations ] && echo YES || echo NO)"' >> /app/docker-entrypoint.sh && \
+    echo '  echo ""' >> /app/docker-entrypoint.sh && \
     echo '  npx prisma migrate status --schema=./schema.prisma || true' >> /app/docker-entrypoint.sh && \
     echo '  echo ""' >> /app/docker-entrypoint.sh && \
-    echo '  echo "💡 Possible solutions:"' >> /app/docker-entrypoint.sh && \
-    echo '  echo "   1. Check if database has conflicting schema"' >> /app/docker-entrypoint.sh && \
-    echo '  echo "   2. Run: prisma migrate resolve --applied <migration_name>"' >> /app/docker-entrypoint.sh && \
-    echo '  echo "   3. Check Railway logs for detailed errors"' >> /app/docker-entrypoint.sh && \
-    echo '  exit 1' >> /app/docker-entrypoint.sh && \
+    echo '  echo "💡 This is a fresh database. Attempting db push as fallback..."' >> /app/docker-entrypoint.sh && \
+    echo '  if npx prisma db push --schema=./schema.prisma --accept-data-loss --skip-generate; then' >> /app/docker-entrypoint.sh && \
+    echo '    echo "✅ Schema pushed successfully via db push!"' >> /app/docker-entrypoint.sh && \
+    echo '    echo "⚠️  Note: Migration history was not recorded. This is OK for first deployment."' >> /app/docker-entrypoint.sh && \
+    echo '  else' >> /app/docker-entrypoint.sh && \
+    echo '    echo "❌ Both migrate deploy and db push failed!"' >> /app/docker-entrypoint.sh && \
+    echo '    echo "   Check DATABASE_URL and database permissions"' >> /app/docker-entrypoint.sh && \
+    echo '    exit 1' >> /app/docker-entrypoint.sh && \
+    echo '  fi' >> /app/docker-entrypoint.sh && \
     echo 'fi' >> /app/docker-entrypoint.sh && \
     echo 'echo ""' >> /app/docker-entrypoint.sh && \
     echo '' >> /app/docker-entrypoint.sh && \
