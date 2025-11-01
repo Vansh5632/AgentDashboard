@@ -18,41 +18,12 @@ const prisma = new PrismaClient();
 const app: Express = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
-// CORS Configuration
-const allowedOrigins = process.env.CORS_ORIGINS?.split(',').map(origin => origin.trim()) || [
-  'http://localhost:3000',
-  'https://web-production-af51.up.railway.app'
-];
-
-console.log('🔐 CORS Configuration:');
-console.log('  Allowed Origins:', allowedOrigins);
+// CORS Configuration - TEMPORARILY ALLOWING ALL ORIGINS
+console.log('🔐 CORS Configuration: ALLOWING ALL ORIGINS');
 console.log('  Node Environment:', process.env.NODE_ENV);
 
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, etc.)
-    if (!origin) {
-      console.log('✅ CORS: Allowing request with no origin');
-      return callback(null, true);
-    }
-    
-    // In development, allow all origins
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`✅ CORS: Allowing ${origin} (development mode)`);
-      return callback(null, true);
-    }
-    
-    // Check if origin is in allowed list or matches Railway pattern
-    if (allowedOrigins.includes(origin) || origin.includes('.railway.app')) {
-      console.log(`✅ CORS: Allowing origin: ${origin}`);
-      callback(null, true);
-    } else {
-      console.warn(`❌ CORS: Blocking origin: ${origin}`);
-      // Don't throw error - just reject the origin but allow the request to proceed
-      // This prevents the preflight from failing completely
-      callback(null, false);
-    }
-  },
+  origin: true, // Allow all origins
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
