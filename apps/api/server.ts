@@ -1,6 +1,5 @@
 // apps/api/server.ts
 import express, { Express, Request, Response } from "express";
-import cors from "cors";
 import { PrismaClient } from "@ai_agent/db";
 import * as dotenv from "dotenv";
 
@@ -18,69 +17,66 @@ const prisma = new PrismaClient();
 const app: Express = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
-// CORS Configuration - Load from environment variable or use defaults
-const allowedOrigins = process.env.CORS_ORIGINS
-  ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
-  : [
-      'https://web-production-af51.up.railway.app',
-      'http://localhost:3000', // for local development
-      'http://localhost:3001'
-    ];
+// CORS Configuration
+// Get allowed frontend origin from environment variable
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN;
+const isDevelopment = process.env.NODE_ENV !== 'production';
 
 console.log('🔐 CORS Configuration:');
-console.log('  Allowed Origins:', allowedOrigins);
-console.log('  Node Environment:', process.env.NODE_ENV);
+console.log('  Environment:', process.env.NODE_ENV || 'development');
+console.log('  Frontend Origin:', FRONTEND_ORIGIN || 'Not set (allowing all in dev)');
 
-// CORS options configuration
-const corsOptions = {
-  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // Allow requests with no origin (like mobile apps, Postman, or curl requests)
-    if (!origin) {
-      return callback(null, true);
-    }
-    
-    // Check if the origin is in our allowed list
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      console.log(`✅ CORS: Allowing origin: ${origin}`);
-      callback(null, true);
-    } else {
-      console.warn(`⚠️  CORS: Blocking origin: ${origin}`);
-      // CRITICAL: Don't throw error - just return false
-      // This allows preflight to complete with proper headers
-      callback(null, false);
-    }
-  },
-  credentials: true, // Allow cookies to be sent
-  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-  exposedHeaders: ['Content-Length', 'X-Request-Id'],
-  maxAge: 86400, // 24 hours - cache preflight requests
-  preflightContinue: false,
-  optionsSuccessStatus: 204
-};
-
-// Use the CORS middleware *before* your routes
-app.use(cors(corsOptions));
-
-// Body Parser
-app.use(express.json());
-
-// Request logging middleware
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${req.get('origin') || 'none'}`);
+// Custom CORS middleware
+app.use((req: Request, res: Response, next) => {
+  const origin = req.get('origin');
+  
+  // Determine if origin is allowed
+  let allowOrigin = false;
+  
+  if (!origin) {
+    // No origin header (e.g., Postman, curl, mobile apps) - allow
+    allowOrigin = true;
+  } else if (isDevelopment && !FRONTEND_ORIGIN) {
+    // Development mode without explicit FRONTEND_ORIGIN - allow all
+    allowOrigin = true;
+    console.log(`✅ CORS [DEV]: Allowing origin: ${origin}`);
+  } else if (FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) {
+    // Production or explicit FRONTEND_ORIGIN set - validate exact match
+    allowOrigin = true;
+    console.log(`✅ CORS: Allowing origin: ${origin}`);
+  } else {
+    // Origin not allowed
+    console.warn(`❌ CORS: Blocking origin: ${origin}`);
+    console.warn(`   Expected origin: ${FRONTEND_ORIGIN || 'Not configured'}`);
+  }
+  
+  // Set CORS headers if origin is allowed
+  if (allowOrigin && origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+    res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
+  }
+  
+  // Handle preflight OPTIONS request
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  
   next();
 });
 
-// Handle preflight OPTIONS requests explicitly
-// This ensures CORS headers are properly set for all OPTIONS requests
-// Note: Using middleware instead of app.options("*") for Express 5.x compatibility
+// Body Parser
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Request logging middleware
 app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    console.log(`📋 OPTIONS preflight request for: ${req.path}`);
-    console.log(`   Origin: ${req.get('origin') || 'none'}`);
-    // CORS middleware already set the headers, just return 204
-    return res.status(204).end();
-  }
+  const origin = req.get('origin') || 'no-origin';
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${req.method} ${req.path} - Origin: ${origin}`);
   next();
 });
 

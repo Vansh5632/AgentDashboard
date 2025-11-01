@@ -2,38 +2,83 @@ import axios from 'axios';
 
 // Get API URL from environment - should be just the domain without any path
 // Example: https://api-production-8446.up.railway.app (NO trailing slash, NO /api, NO /health)
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001')
+  .replace(/\/$/, '') // Remove trailing slash
+  .replace(/\/api.*$/, '') // Remove any /api path if accidentally included
+  .replace(/\/health.*$/, ''); // Remove any /health path if accidentally included
 
-// Remove any trailing slashes and any accidental paths like /health
+console.log('🌐 API Client Configuration:');
+console.log('  Base URL:', `${API_URL}/api`);
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true, // Important: Send cookies and handle CORS properly
+  timeout: 30000, // 30 second timeout
 });
 
-// Add token to requests if available
-api.interceptors.request.use((config) => {
-  if (typeof window !== 'undefined') {
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-  }
-  return config;
-});
-
-// Handle auth errors
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('token');
-        window.location.href = '/login';
+// Request interceptor - Add auth token
+api.interceptors.request.use(
+  (config) => {
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('token');
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
       }
     }
+    return config;
+  },
+  (error) => {
+    console.error('❌ Request interceptor error:', error);
+    return Promise.reject(error);
+  }
+);
+
+// Response interceptor - Handle errors globally
+api.interceptors.response.use(
+  (response) => {
+    // Log successful API calls in development
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`✅ API Success: ${response.config.method?.toUpperCase()} ${response.config.url}`);
+    }
+    return response;
+  },
+  (error) => {
+    // Enhanced error handling
+    if (error.response) {
+      // Server responded with error status
+      const status = error.response.status;
+      const message = error.response.data?.error || error.response.data?.message || 'An error occurred';
+      
+      console.error(`❌ API Error [${status}]:`, message);
+      
+      // Handle authentication errors
+      if (status === 401) {
+        if (typeof window !== 'undefined') {
+          console.warn('🔒 Unauthorized - Redirecting to login');
+          localStorage.removeItem('token');
+          
+          // Only redirect if not already on login page
+          if (!window.location.pathname.includes('/login')) {
+            window.location.href = '/login';
+          }
+        }
+      }
+      
+      // Handle CORS errors (though these usually don't reach here)
+      if (status === 0) {
+        console.error('🚫 CORS Error: Cannot connect to API server');
+      }
+    } else if (error.request) {
+      // Request made but no response received
+      console.error('📡 Network Error: No response from server', error.request);
+    } else {
+      // Something else happened
+      console.error('⚠️  Request Error:', error.message);
+    }
+    
     return Promise.reject(error);
   }
 );

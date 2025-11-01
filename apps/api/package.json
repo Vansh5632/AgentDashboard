@@ -14,7 +14,6 @@
   "packageManager": "pnpm@10.18.3",
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
-    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.8.0",
@@ -27,7 +26,6 @@
     "axios": "^1.12.2",
     "bcrypt": "^6.0.0",
     "bullmq": "^5.61.0",
-    "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "ioredis": "^5.8.1",
