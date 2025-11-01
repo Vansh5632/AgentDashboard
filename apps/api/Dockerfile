@@ -55,7 +55,11 @@ RUN pnpm install --prod --frozen-lockfile
 
 # Copy built files
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
-COPY --from=builder /app/packages/db ./packages/db
+
+# Copy packages/db with schema and migrations
+COPY --from=builder /app/packages/db/schema.prisma ./packages/db/schema.prisma
+COPY --from=builder /app/packages/db/migrations ./packages/db/migrations
+COPY --from=builder /app/packages/db/package.json ./packages/db/package.json
 
 # Generate Prisma Client again in production
 RUN cd packages/db && npx prisma generate
