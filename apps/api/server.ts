@@ -31,12 +31,16 @@ console.log('🔐 CORS Configuration:');
 console.log('  Allowed Origins:', allowedOrigins);
 console.log('  Node Environment:', process.env.NODE_ENV);
 
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+// CORS options configuration
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Allow requests with no origin (like mobile apps, Postman, or curl requests)
+    if (!origin) {
+      return callback(null, true);
+    }
     
-    if (allowedOrigins.includes(origin)) {
+    // Check if the origin is in our allowed list
+    if (allowedOrigins.indexOf(origin) !== -1) {
       console.log(`✅ CORS: Allowing origin: ${origin}`);
       callback(null, true);
     } else {
@@ -46,14 +50,17 @@ app.use(cors({
       callback(null, false);
     }
   },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  credentials: true, // Allow cookies to be sent
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   exposedHeaders: ['Content-Length', 'X-Request-Id'],
   maxAge: 86400, // 24 hours - cache preflight requests
   preflightContinue: false,
   optionsSuccessStatus: 204
-}));
+};
+
+// Use the CORS middleware *before* your routes
+app.use(cors(corsOptions));
 
 // Body Parser
 app.use(express.json());
@@ -64,13 +71,15 @@ app.use((req, res, next) => {
   next();
 });
 
-// Explicit OPTIONS handler for preflight requests (handles CORS)
+// Handle preflight OPTIONS requests explicitly
+// This ensures CORS headers are properly set for all OPTIONS requests
 // Note: Using middleware instead of app.options("*") for Express 5.x compatibility
 app.use((req, res, next) => {
   if (req.method === 'OPTIONS') {
-    console.log(`OPTIONS request for: ${req.path}`);
-    console.log(`Origin: ${req.get('origin')}`);
-    return res.sendStatus(204);
+    console.log(`📋 OPTIONS preflight request for: ${req.path}`);
+    console.log(`   Origin: ${req.get('origin') || 'none'}`);
+    // CORS middleware already set the headers, just return 204
+    return res.status(204).end();
   }
   next();
 });
