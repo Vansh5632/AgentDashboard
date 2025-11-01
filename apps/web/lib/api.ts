@@ -2,10 +2,7 @@ import axios from 'axios';
 
 // Get API URL from environment - should be just the domain without any path
 // Example: https://api-production-8446.up.railway.app (NO trailing slash, NO /api, NO /health)
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001')
-  .replace(/\/$/, '') // Remove trailing slash
-  .replace(/\/api.*$/, '') // Remove any /api path if accidentally included
-  .replace(/\/health.*$/, ''); // Remove any /health path if accidentally included
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001') // Remove any /health path if accidentally included
 
 console.log('🌐 API Client Configuration:');
 console.log('  Base URL:', `${API_URL}/api`);
