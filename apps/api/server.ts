@@ -18,12 +18,34 @@ const prisma = new PrismaClient();
 const app: Express = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
-// CORS Configuration - TEMPORARILY ALLOWING ALL ORIGINS
-console.log('🔐 CORS Configuration: ALLOWING ALL ORIGINS');
+// CORS Configuration - Load from environment variable or use defaults
+const allowedOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
+  : [
+      'https://web-production-af51.up.railway.app',
+      'http://localhost:3000', // for local development
+      'http://localhost:3001'
+    ];
+
+console.log('🔐 CORS Configuration:');
+console.log('  Allowed Origins:', allowedOrigins);
 console.log('  Node Environment:', process.env.NODE_ENV);
 
 app.use(cors({
-  origin: true, // Allow all origins
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      console.log(`✅ CORS: Allowing origin: ${origin}`);
+      callback(null, true);
+    } else {
+      console.warn(`⚠️  CORS: Blocking origin: ${origin}`);
+      // CRITICAL: Don't throw error - just return false
+      // This allows preflight to complete with proper headers
+      callback(null, false);
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
@@ -40,6 +62,13 @@ app.use(express.json());
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${req.get('origin') || 'none'}`);
   next();
+});
+
+// Explicit OPTIONS handler for all routes (handles CORS preflight)
+app.options("*", (req: Request, res: Response) => {
+  console.log(`OPTIONS request for: ${req.path}`);
+  console.log(`Origin: ${req.get('origin')}`);
+  res.sendStatus(204);
 });
 
 // Public Routes
