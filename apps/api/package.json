@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only server.ts",
     "build": "cd ../../packages/db && npx prisma generate && cd ../../apps/api && tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "postinstall": "prisma generate",
+    "postdeploy": "prisma migrate deploy"
   },
   "keywords": [],
   "author": "",
