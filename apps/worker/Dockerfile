@@ -36,14 +36,15 @@ RUN cd packages/db && npx prisma generate
 # Build TypeScript
 RUN cd apps/worker && pnpm build
 
-# Stage 3: Runner
-FROM node:20-alpine AS runner
+# Stage 3: Production
+FROM node:20-alpine AS production
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install only production dependencies
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Install dependencies for Railway deployment
+RUN apk add --no-cache curl && \
+    corepack enable && corepack prepare pnpm@latest --activate
 
 # Copy workspace config
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
@@ -60,8 +61,9 @@ COPY --from=builder /app/packages/db ./packages/db
 # Generate Prisma Client again in production
 RUN cd packages/db && npx prisma generate
 
-# Health check (worker doesn't expose HTTP, so just check process)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD ps aux | grep -v grep | grep "node" || exit 1
+# Health check for Railway (worker doesn't expose HTTP, so check process and database connection)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
+  CMD ps aux | grep -v grep | grep "node.*worker" && cd packages/db && npx prisma db version || exit 1
 
-CMD ["node", "apps/worker/dist/worker.js"]
+# Railway deployment: Wait for database to be ready, then start worker
+CMD ["sh", "-c", "echo 'Starting Railway Worker deployment...' && echo 'Waiting for database to be ready...' && until cd packages/db && npx prisma db version > /dev/null 2>&1; do echo 'Database not ready, waiting 5 seconds...'; sleep 5; done && echo 'Database is ready' && echo 'Starting worker...' && cd /app && node apps/worker/dist/worker.js"]
