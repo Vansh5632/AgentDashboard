@@ -71,6 +71,9 @@ COPY --from=db-setup /app/packages/db ./packages/db
 COPY apps/api/server.ts ./apps/api/
 COPY apps/worker/worker.ts ./apps/worker/
 
+# Generate Prisma Client in production
+RUN cd packages/db && npx prisma generate
+
 # Create necessary users
 RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 

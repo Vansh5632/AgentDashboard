@@ -29,8 +29,8 @@ COPY apps/web ./apps/web
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN cd apps/web && pnpm build
 
-# Stage 3: Runner
-FROM node:20-alpine AS runner
+# Stage 3: Production
+FROM node:20-alpine AS production
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -39,6 +39,9 @@ ENV PORT=3000
 
 RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 
+# Install curl for Railway health checks
+RUN apk add --no-cache curl
+
 # Copy necessary files from builder
 COPY --from=builder /app/apps/web/next.config.mjs ./
 COPY --from=builder /app/apps/web/package.json ./
@@ -46,13 +49,14 @@ COPY --from=builder /app/apps/web/package.json ./
 # Copy standalone build output
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
 
 USER nextjs
 
 EXPOSE 3000
 
-# Health check
+# Health check for Railway
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})" || exit 0
+  CMD curl -f http://localhost:3000 || exit 1
 
 CMD ["node", "apps/web/server.js"]

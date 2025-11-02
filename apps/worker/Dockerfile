@@ -58,7 +58,7 @@ RUN pnpm install --prod --frozen-lockfile
 COPY --from=builder /app/apps/worker/dist ./apps/worker/dist
 COPY --from=builder /app/packages/db ./packages/db
 
-# Generate Prisma Client again in production
+# Generate Prisma Client in production
 RUN cd packages/db && npx prisma generate
 
 # Health check for Railway (worker doesn't expose HTTP, so check process and database connection)
