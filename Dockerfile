@@ -56,6 +56,9 @@ COPY apps/worker/package.json ./apps/worker/
 COPY apps/web/package.json ./apps/web/
 COPY packages/db/package.json ./packages/db/
 
+# Copy Prisma schema before installing dependencies (needed for postinstall script)
+COPY packages/db/schema.prisma ./packages/db/
+
 # Install production dependencies only
 RUN pnpm install --prod --frozen-lockfile
 
@@ -70,9 +73,6 @@ COPY --from=db-setup /app/packages/db ./packages/db
 # Copy source files needed for runtime
 COPY apps/api/server.ts ./apps/api/
 COPY apps/worker/worker.ts ./apps/worker/
-
-# Generate Prisma Client in production
-RUN cd packages/db && npx prisma generate
 
 # Create necessary users
 RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
