@@ -64,14 +64,14 @@ COPY packages/db/package.json ./packages/db/
 # Copy Prisma schema
 COPY packages/db/schema.prisma ./packages/db/
 
+# Copy built db package BEFORE install (so it exists when pnpm creates symlinks)
+COPY --from=builder /app/packages/db/dist ./packages/db/dist
+
 # Install production dependencies (this will create symlinks for workspace packages)
 RUN pnpm install --prod --frozen-lockfile
 
 # Generate Prisma Client in production
 RUN cd packages/db && npx prisma generate
-
-# Copy built db package AFTER install (so symlink already exists)
-COPY --from=builder /app/packages/db/dist ./packages/db/dist
 
 # Copy built application from builder
 COPY --from=builder /app/apps/worker/dist ./apps/worker/dist

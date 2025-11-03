@@ -66,21 +66,21 @@ COPY packages/db/package.json ./packages/db/
 COPY packages/db/schema.prisma ./packages/db/
 COPY packages/db/migrations ./packages/db/migrations
 
+# Copy built db package BEFORE install (so it exists when pnpm creates symlinks)
+COPY --from=builder /app/packages/db/dist ./packages/db/dist
+
 # Install production dependencies (this will create symlinks for workspace packages)
 RUN pnpm install --prod --frozen-lockfile
 
 # Generate Prisma Client in production
 RUN cd packages/db && npx prisma generate
 
-# Copy built db package AFTER install (so symlink already exists)
-COPY --from=builder /app/packages/db/dist ./packages/db/dist
-
 # Copy built application from builder
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 
-# Health check endpoint
+# Health check endpoint (using 127.0.0.1 instead of localhost to avoid IPv6 issues)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
-  CMD curl -f http://localhost:${PORT}/health || exit 1
+  CMD curl -f http://127.0.0.1:3001/health || exit 1
 
 EXPOSE ${PORT}
 
