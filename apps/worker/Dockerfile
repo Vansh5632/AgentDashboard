@@ -64,7 +64,10 @@ COPY packages/db/package.json ./packages/db/
 # Copy Prisma schema
 COPY packages/db/schema.prisma ./packages/db/
 
-# Install production dependencies only
+# Copy built db package with all its files
+COPY --from=builder /app/packages/db/dist ./packages/db/dist
+
+# Install production dependencies (this will create symlinks for workspace packages)
 RUN pnpm install --prod --frozen-lockfile
 
 # Generate Prisma Client in production
@@ -72,9 +75,6 @@ RUN cd packages/db && npx prisma generate
 
 # Copy built application from builder
 COPY --from=builder /app/apps/worker/dist ./apps/worker/dist
-
-# Copy built db package
-COPY --from=builder /app/packages/db/dist ./packages/db/dist
 
 # Health check - just check if worker process is running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \

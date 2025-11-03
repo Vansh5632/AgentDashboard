@@ -66,7 +66,10 @@ COPY packages/db/package.json ./packages/db/
 COPY packages/db/schema.prisma ./packages/db/
 COPY packages/db/migrations ./packages/db/migrations
 
-# Install production dependencies only
+# Copy built db package with all its files
+COPY --from=builder /app/packages/db/dist ./packages/db/dist
+
+# Install production dependencies (this will create symlinks for workspace packages)
 RUN pnpm install --prod --frozen-lockfile
 
 # Generate Prisma Client in production
@@ -74,9 +77,6 @@ RUN cd packages/db && npx prisma generate
 
 # Copy built application from builder
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
-
-# Copy built db package
-COPY --from=builder /app/packages/db/dist ./packages/db/dist
 
 # Health check endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
@@ -88,4 +88,4 @@ EXPOSE ${PORT}
 # 1. Wait for database to be ready
 # 2. Run Prisma migrations
 # 3. Start API server
-CMD ["sh", "-c", "echo '🚀 Starting API Service...' && echo '⏳ Waiting for database to be ready...' && until pg_isready -h $(echo $DATABASE_URL | sed 's/.*@\\([^:]*\\).*/\\1/') > /dev/null 2>&1; do echo '  Database not ready, waiting 2 seconds...' && sleep 2; done && echo '✅ Database is ready!' && echo '📊 Running database migrations...' && cd packages/db && npx prisma migrate deploy && echo '✅ Migrations completed successfully!' && cd /app && echo '🌐 Starting API server on port ${PORT}...' && node apps/api/dist/server.js"]
+CMD ["sh", "-c", "echo '🚀 Starting API Service...' && echo '⏳ Waiting for database to be ready...' && until pg_isready -h $(echo $DATABASE_URL | sed 's/.*@\\([^:]*\\).*/\\1/') > /dev/null 2>&1; do echo '  Database not ready, waiting 2 seconds...' && sleep 2; done && echo '✅ Database is ready!' && echo '📊 Running database migrations...' && cd packages/db && pnpm exec prisma migrate deploy && echo '✅ Migrations completed successfully!' && cd /app && echo '🌐 Starting API server on port ${PORT}...' && node apps/api/dist/server.js"]
