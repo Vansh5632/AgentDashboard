@@ -42,7 +42,8 @@ COPY packages/db ./packages/db
 # Generate Prisma Client
 RUN cd packages/db && npx prisma generate
 
-# Build TypeScript to JavaScript
+# Build TypeScript to JavaScript for both packages
+RUN cd packages/db && pnpm build
 RUN cd apps/worker && pnpm build
 
 # Stage 3: Production image
@@ -71,6 +72,9 @@ RUN cd packages/db && npx prisma generate
 
 # Copy built application from builder
 COPY --from=builder /app/apps/worker/dist ./apps/worker/dist
+
+# Copy built db package
+COPY --from=builder /app/packages/db/dist ./packages/db/dist
 
 # Health check - just check if worker process is running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \

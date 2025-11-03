@@ -2,9 +2,10 @@
   "name": "@ai_agent/db",
   "version": "1.0.0",
   "description": "Database package with Prisma schema and client",
-  "main": "index.ts",
-  "types": "index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
+    "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1",
     "postinstall": "prisma generate --schema=./schema.prisma",
     "postdeploy":"prisma migrate deploy"
@@ -18,5 +19,6 @@
     "prisma": "^6.17.1"
   },
   "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }

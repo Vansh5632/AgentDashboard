@@ -181,6 +181,10 @@ importers:
       prisma:
         specifier: ^6.17.1
         version: 6.17.1(typescript@5.9.3)
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
 packages:
 
