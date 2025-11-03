@@ -33,6 +33,9 @@ COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 # Copy web app source code
 COPY apps/web ./apps/web
 
+# Ensure public directory exists for build stage
+RUN mkdir -p ./apps/web/public
+
 # Build Next.js app with standalone output
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN cd apps/web && pnpm build
@@ -58,6 +61,9 @@ COPY --from=builder /app/apps/web/package.json ./
 # Copy standalone build output
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
+
+# Create public directory and copy if it exists
+RUN mkdir -p ./apps/web/public
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
 
 USER nextjs
