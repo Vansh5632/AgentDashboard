@@ -4,8 +4,8 @@ dockerfilePath = "apps/api/Dockerfile"
 dockerContext = "./"
 
 [deploy]
-# Dockerfile ENTRYPOINT handles migrations and server startup automatically
-# No need for startCommand - Docker ENTRYPOINT will be used
+# CMD in Dockerfile handles migrations and server startup automatically
 healthcheckPath = "/health"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

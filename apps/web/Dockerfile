@@ -1,35 +1,43 @@
-# Stage 1: Dependencies
+# ============================================
+# Web Frontend Dockerfile
+# ============================================
+# This Dockerfile builds the Next.js web app for Railway deployment
+# No database dependencies needed - this is just the frontend
+
+# Stage 1: Install dependencies
 FROM node:20-alpine AS deps
 RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 
-# Copy workspace config and package files
+# Copy workspace configuration files
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+
+# Copy package.json for web app only (no db dependency needed)
 COPY apps/web/package.json ./apps/web/
 
-# Install dependencies
+# Install all dependencies
 RUN pnpm install --frozen-lockfile
 
-# Stage 2: Builder
+# Stage 2: Build Next.js application
 FROM node:20-alpine AS builder
 RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 
-# Copy dependencies and workspace config from deps stage
+# Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
-COPY --from=deps /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
-COPY --from=deps /app/package.json ./package.json
-COPY --from=deps /app/pnpm-lock.yaml ./pnpm-lock.yaml
 
-# Copy source code
+# Copy workspace configuration
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+
+# Copy web app source code
 COPY apps/web ./apps/web
 
-# Build Next.js app
+# Build Next.js app with standalone output
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN cd apps/web && pnpm build
 
-# Stage 3: Production
+# Stage 3: Production image
 FROM node:20-alpine AS production
 WORKDIR /app
 
@@ -37,12 +45,13 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 
+# Create non-root user
 RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 
-# Install curl for Railway health checks
+# Install curl for health checks
 RUN apk add --no-cache curl
 
-# Copy necessary files from builder
+# Copy Next.js configuration
 COPY --from=builder /app/apps/web/next.config.mjs ./
 COPY --from=builder /app/apps/web/package.json ./
 
@@ -55,8 +64,9 @@ USER nextjs
 
 EXPOSE 3000
 
-# Health check for Railway
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD curl -f http://localhost:3000 || exit 1
 
+# Start Next.js server
 CMD ["node", "apps/web/server.js"]

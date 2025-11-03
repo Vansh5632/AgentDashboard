@@ -2,10 +2,8 @@
 builder = "DOCKERFILE"
 dockerfilePath = "apps/worker/Dockerfile"
 dockerContext = "./"
-# Build context is the repository root so Dockerfile can access all workspace files
 
 [deploy]
-startCommand = "node apps/worker/dist/worker.js"
+# CMD in Dockerfile handles database wait and worker startup automatically
 restartPolicyType = "ON_FAILURE"
-# Worker doesn't have HTTP health checks
-https://web-production-af51.up.railway.app/
+restartPolicyMaxRetries = 10
