@@ -1,8 +1,8 @@
 # ============================================
-# API Service Dockerfile
+# API Service Dockerfile - FIXED VERSION
 # ============================================
 # This Dockerfile builds the API service for Railway deployment
-# It handles database migrations before starting the server
+# It properly handles the monorepo structure and builds the DB package
 
 # Stage 1: Install dependencies
 FROM node:20-alpine AS deps
@@ -12,7 +12,7 @@ WORKDIR /app
 # Copy workspace configuration files
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 
-# Copy package.json files for workspace dependencies
+# Copy ALL package.json files for proper dependency resolution
 COPY apps/api/package.json ./apps/api/
 COPY packages/db/package.json ./packages/db/
 
@@ -35,16 +35,25 @@ COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
 # Copy workspace configuration
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 
-# Copy source code
+# Copy ALL source code
 COPY apps/api ./apps/api
 COPY packages/db ./packages/db
 
-# Generate Prisma Client
+# CRITICAL: Build packages in correct order
+# 1. First generate Prisma Client
 RUN cd packages/db && npx prisma generate
 
-# Build TypeScript to JavaScript for both packages
+# 2. Build the DB package FIRST (creates dist/index.js)
 RUN cd packages/db && pnpm build
+
+# 3. Verify DB package was built correctly
+RUN ls -la packages/db/dist/ && echo "DB package contents:" && cat packages/db/dist/index.js
+
+# 4. Then build the API service
 RUN cd apps/api && pnpm build
+
+# NEW: Install production dependencies after build (creates correct symlinks)
+RUN pnpm install --prod --frozen-lockfile --force
 
 # Stage 3: Production image
 FROM node:20-alpine AS production
@@ -53,39 +62,35 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3001
 
-# Install system dependencies (curl for health checks, postgresql-client for DB checks)
+# Install system dependencies
 RUN apk add --no-cache curl postgresql-client && \
     corepack enable && corepack prepare pnpm@latest --activate
 
-# Copy workspace configuration
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
-COPY apps/api/package.json ./apps/api/
-COPY packages/db/package.json ./packages/db/
-
-# Copy Prisma schema and migrations
-COPY packages/db/schema.prisma ./packages/db/
-COPY packages/db/migrations ./packages/db/migrations
-
-# Copy built db package BEFORE install (so it exists when pnpm creates symlinks)
-COPY --from=builder /app/packages/db/dist ./packages/db/dist
-
-# Install production dependencies (this will create symlinks for workspace packages)
-RUN pnpm install --prod --frozen-lockfile
-
-# Generate Prisma Client in production
-RUN cd packages/db && npx prisma generate
-
-# Copy built application from builder
+# Copy pre-built structure (node_modules with symlinks, full DB package as target, API dist)
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/db ./packages/db
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 
-# Health check endpoint (using 127.0.0.1 instead of localhost to avoid IPv6 issues)
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
   CMD curl -f http://127.0.0.1:3001/health || exit 1
 
 EXPOSE ${PORT}
 
-# Start script:
-# 1. Wait for database to be ready
-# 2. Run Prisma migrations
-# 3. Start API server
-CMD ["sh", "-c", "echo '🚀 Starting API Service...' && echo '⏳ Waiting for database to be ready...' && until pg_isready -h $(echo $DATABASE_URL | sed 's/.*@\\([^:]*\\).*/\\1/') > /dev/null 2>&1; do echo '  Database not ready, waiting 2 seconds...' && sleep 2; done && echo '✅ Database is ready!' && echo '📊 Running database migrations...' && cd packages/db && pnpm exec prisma migrate deploy && echo '✅ Migrations completed successfully!' && cd /app && echo '🌐 Starting API server on port ${PORT}...' && node apps/api/dist/server.js"]
+# Enhanced startup script with better error handling (use npx for migrate)
+CMD ["sh", "-c", "\
+  echo '🚀 Starting API Service...' && \
+  echo '⏳ Waiting for database to be ready...' && \
+  until pg_isready -h $(echo $DATABASE_URL | sed 's/.*@\\([^:]*\\).*/\\1/') > /dev/null 2>&1; do \
+    echo '  Database not ready, waiting 2 seconds...' && sleep 2; \
+  done && \
+  echo '✅ Database is ready!' && \
+  echo '🔍 Verifying DB package...' && \
+  node -e 'try { require(\"@ai_agent/db\"); console.log(\"✅ DB package loaded successfully\"); } catch(e) { console.error(\"❌ DB package error:\", e.message); process.exit(1); }' && \
+  echo '📊 Running database migrations...' && \
+  cd packages/db && npx prisma migrate deploy && \
+  echo '✅ Migrations completed successfully!' && \
+  cd /app && \
+  echo '🌐 Starting API server on port ${PORT}...' && \
+  node apps/api/dist/server.js \
+"]

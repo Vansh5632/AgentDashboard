@@ -1,8 +1,8 @@
 # ============================================
-# Worker Service Dockerfile
+# Worker Service Dockerfile - FIXED VERSION
 # ============================================
 # This Dockerfile builds the Worker service for Railway deployment
-# It waits for database to be ready but does NOT run migrations (API handles that)
+# It properly handles the monorepo structure and builds the DB package
 
 # Stage 1: Install dependencies
 FROM node:20-alpine AS deps
@@ -12,7 +12,7 @@ WORKDIR /app
 # Copy workspace configuration files
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 
-# Copy package.json files for workspace dependencies
+# Copy ALL package.json files for proper dependency resolution
 COPY apps/worker/package.json ./apps/worker/
 COPY packages/db/package.json ./packages/db/
 
@@ -35,16 +35,25 @@ COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
 # Copy workspace configuration
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 
-# Copy source code
+# Copy ALL source code
 COPY apps/worker ./apps/worker
 COPY packages/db ./packages/db
 
-# Generate Prisma Client
+# CRITICAL: Build packages in correct order
+# 1. First generate Prisma Client
 RUN cd packages/db && npx prisma generate
 
-# Build TypeScript to JavaScript for both packages
+# 2. Build the DB package FIRST (creates dist/index.js)
 RUN cd packages/db && pnpm build
+
+# 3. Verify DB package was built correctly
+RUN ls -la packages/db/dist/ && echo "DB package contents:" && cat packages/db/dist/index.js
+
+# 4. Then build the Worker service
 RUN cd apps/worker && pnpm build
+
+# NEW: Install production dependencies after build (creates correct symlinks)
+RUN pnpm install --prod --frozen-lockfile --force
 
 # Stage 3: Production image
 FROM node:20-alpine AS production
@@ -52,35 +61,29 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install system dependencies (postgresql-client for DB health checks)
+# Install system dependencies
 RUN apk add --no-cache postgresql-client && \
     corepack enable && corepack prepare pnpm@latest --activate
 
-# Copy workspace configuration
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
-COPY apps/worker/package.json ./apps/worker/
-COPY packages/db/package.json ./packages/db/
-
-# Copy Prisma schema
-COPY packages/db/schema.prisma ./packages/db/
-
-# Copy built db package BEFORE install (so it exists when pnpm creates symlinks)
-COPY --from=builder /app/packages/db/dist ./packages/db/dist
-
-# Install production dependencies (this will create symlinks for workspace packages)
-RUN pnpm install --prod --frozen-lockfile
-
-# Generate Prisma Client in production
-RUN cd packages/db && npx prisma generate
-
-# Copy built application from builder
+# Copy pre-built structure (node_modules with symlinks, full DB package as target, worker dist)
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/db ./packages/db
 COPY --from=builder /app/apps/worker/dist ./apps/worker/dist
 
-# Health check - just check if worker process is running
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
   CMD ps aux | grep -v grep | grep "node.*worker" || exit 1
 
-# Start script:
-# 1. Wait for database to be ready (but don't run migrations)
-# 2. Start worker process
-CMD ["sh", "-c", "echo '🚀 Starting Worker Service...' && echo '⏳ Waiting for database to be ready...' && until pg_isready -h $(echo $DATABASE_URL | sed 's/.*@\\([^:]*\\).*/\\1/') > /dev/null 2>&1; do echo '  Database not ready, waiting 3 seconds...' && sleep 3; done && echo '✅ Database is ready!' && echo '⚙️  Starting worker process...' && node apps/worker/dist/worker.js"]
+# Enhanced startup script with better error handling
+CMD ["sh", "-c", "\
+  echo '🚀 Starting Worker Service...' && \
+  echo '⏳ Waiting for database to be ready...' && \
+  until pg_isready -h $(echo $DATABASE_URL | sed 's/.*@\\([^:]*\\).*/\\1/') > /dev/null 2>&1; do \
+    echo '  Database not ready, waiting 3 seconds...' && sleep 3; \
+  done && \
+  echo '✅ Database is ready!' && \
+  echo '🔍 Verifying DB package...' && \
+  node -e 'try { require(\"@ai_agent/db\"); console.log(\"✅ DB package loaded successfully\"); } catch(e) { console.error(\"❌ DB package error:\", e.message); process.exit(1); }' && \
+  echo '⚙️  Starting worker process...' && \
+  node apps/worker/dist/worker.js \
+"]
