@@ -71,9 +71,11 @@ COPY --from=builder /app/apps/worker/node_modules ./apps/worker/node_modules
 COPY --from=builder /app/packages/db ./packages/db
 COPY --from=builder /app/apps/worker/dist ./apps/worker/dist
 
-# Ensure workspace package is reachable from node_modules in production image
-RUN mkdir -p node_modules/@ai_agent \
-  && ln -s /app/packages/db node_modules/@ai_agent/db
+# Ensure workspace package is reachable from all resolution paths
+RUN mkdir -p node_modules/@ai_agent apps/worker/node_modules/@ai_agent \
+  && rm -rf node_modules/@ai_agent/db apps/worker/node_modules/@ai_agent/db \
+  && ln -s /app/packages/db node_modules/@ai_agent/db \
+  && ln -s /app/packages/db apps/worker/node_modules/@ai_agent/db
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
