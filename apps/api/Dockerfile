@@ -26,7 +26,6 @@ RUN pnpm install --frozen-lockfile
 FROM node:20-alpine AS builder
 RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
-ENV CI=true
 
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
@@ -54,7 +53,7 @@ RUN ls -la packages/db/dist/ && echo "DB package contents:" && cat packages/db/d
 RUN cd apps/api && pnpm build
 
 # NEW: Prune dev dependencies after build without disturbing build output
-RUN pnpm prune --prod
+RUN printf 'Skipping pnpm prune to retain workspace dependencies in node_modules\n'
 
 # Stage 3: Production image
 FROM node:20-alpine AS production
@@ -69,8 +68,13 @@ RUN apk add --no-cache curl postgresql-client && \
 
 # Copy pre-built structure (node_modules with symlinks, full DB package as target, API dist)
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=builder /app/packages/db ./packages/db
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
+
+# Ensure workspace package is reachable from node_modules in production image
+RUN mkdir -p node_modules/@ai_agent \
+  && ln -s /app/packages/db node_modules/@ai_agent/db
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
