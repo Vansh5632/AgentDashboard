@@ -26,6 +26,7 @@ RUN pnpm install --frozen-lockfile
 FROM node:20-alpine AS builder
 RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
+ENV CI=true
 
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
@@ -52,8 +53,8 @@ RUN ls -la packages/db/dist/ && echo "DB package contents:" && cat packages/db/d
 # 4. Then build the Worker service
 RUN cd apps/worker && pnpm build
 
-# NEW: Install production dependencies after build (creates correct symlinks)
-RUN pnpm install --prod --frozen-lockfile --force
+# NEW: Prune dev dependencies after build without touching compiled artifacts
+RUN pnpm prune --prod
 
 # Stage 3: Production image
 FROM node:20-alpine AS production
