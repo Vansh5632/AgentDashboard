@@ -1,78 +1,128 @@
-# ============================================
-# Web Frontend Dockerfile
-# ============================================
-# This Dockerfile builds the Next.js web app for Railway deployment
-# No database dependencies needed - this is just the frontend
+# Multi-stage Dockerfile for Web service (Next.js)
+# This follows the step-by-step guide for pnpm monorepo builds
 
-# Stage 1: Install dependencies
-FROM node:20-alpine AS deps
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# ================================
+# Stage 1: Base - Install Node.js and pnpm
+# ================================
+FROM node:20-alpine AS base
+
+# Install system dependencies
+RUN apk add --no-cache \
+    libc6-compat \
+    dumb-init
+
+# Install pnpm globally
+RUN npm install -g pnpm@10.18.3
+
+# Create app user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S web -u 1001
+
+# Set working directory
 WORKDIR /app
 
-# Copy workspace configuration files
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+# ================================
+# Stage 2: Dependencies - Cache production dependencies
+# ================================
+FROM base AS deps
 
-# Copy package.json for web app only (no db dependency needed)
+# Copy only manifest files for dependency caching
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json ./apps/web/
 
-# Install all dependencies
-RUN pnpm install --frozen-lockfile
+# Fetch production dependencies only (creates cache)
+RUN pnpm fetch --prod
 
-# Stage 2: Build Next.js application
-FROM node:20-alpine AS builder
-RUN corepack enable && corepack prepare pnpm@latest --activate
-WORKDIR /app
+# ================================
+# Stage 3: Builder - Build the application
+# ================================
+FROM base AS builder
 
-# Copy dependencies from deps stage
+# Copy dependency cache from deps stage
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 
 # Copy workspace configuration
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
 # Copy web app source code
 COPY apps/web ./apps/web
 
-# Ensure public directory exists for build stage
-RUN mkdir -p ./apps/web/public
+# Install all dependencies (dev + prod) for the web app
+RUN CI=true pnpm install --filter=web... --frozen-lockfile
 
-# Build Next.js app with standalone output
-ENV NEXT_TELEMETRY_DISABLED=1
-RUN cd apps/web && pnpm build
+# Set Next.js environment variables for build
+ENV NEXT_TELEMETRY_DISABLED 1
+ENV NODE_ENV production
 
-# Stage 3: Production image
-FROM node:20-alpine AS production
-WORKDIR /app
+# Build the Next.js application
+RUN pnpm --filter web run build
 
+# ================================
+# Stage 4: Pruner - Create clean production artifacts
+# ================================
+FROM base AS pruner
+
+# Copy workspace configuration
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/web/package.json ./apps/web/
+
+# Copy built application from builder
+COPY --from=builder /app/apps/web/.next/standalone ./apps/web/
+COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /app/apps/web/public ./apps/web/public
+
+# Use pnpm deploy to create clean production directory
+# This copies only production dependencies
+RUN pnpm --filter=web deploy --prod --legacy /prod-web
+
+# Copy the Next.js standalone files to the production directory
+COPY --from=builder /app/apps/web/.next/standalone /prod-web/
+COPY --from=builder /app/apps/web/.next/static /prod-web/.next/static
+COPY --from=builder /app/apps/web/public /prod-web/public
+
+# ================================
+# Stage 5: Final - Production runtime image
+# ================================
+FROM node:20-alpine AS final
+
+# Install only essential runtime dependencies
+RUN apk add --no-cache \
+    dumb-init
+
+# Create app user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S web -u 1001
+
+# Set production environment
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
+# Set working directory
+WORKDIR /app
 
-# Install curl for health checks
-RUN apk add --no-cache curl
+# Copy clean production artifacts from pruner stage
+COPY --from=pruner --chown=web:nodejs /prod-web ./
 
-# Copy Next.js configuration
-COPY --from=builder /app/apps/web/next.config.mjs ./
-COPY --from=builder /app/apps/web/package.json ./
+# Ensure the server.js file is executable (it's in apps/web/ subdirectory)
+RUN chmod +x ./apps/web/server.js
 
-# Copy standalone build output
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
+# Change ownership of the app directory
+RUN chown -R web:nodejs /app
 
-# Create public directory and copy if it exists
-RUN mkdir -p ./apps/web/public
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
+# Switch to non-root user
+USER web
 
-USER nextjs
-
+# Expose the port
 EXPOSE 3000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD curl -f http://localhost:3000 || exit 1
+# Health check for web service
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
 
-# Start Next.js server
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
+
+# Start the Next.js application
 CMD ["node", "apps/web/server.js"]

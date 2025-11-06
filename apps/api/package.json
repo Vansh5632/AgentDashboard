@@ -5,7 +5,8 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only server.ts",
-    "build": "cd ../../packages/db && npx prisma generate && cd ../../apps/api && tsc",
+    "prebuild": "pnpm --filter @ai_agent/db run generate",
+    "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js"
   },
   "keywords": [],

@@ -1,45 +1,106 @@
-# Dependencies (will be installed in container)
-node_modules
-.pnpm-store
+# .dockerignore for monorepo services (API, Worker, and Web)
+# This aggressively ignores everything except what's needed for builds
 
-# Environment files
-.env
-.env.local
-.env.production
-.env.development
+# Ignore everything by default
+*
 
-# Git
-.git
+# Allow workspace configuration files (needed for pnpm)
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+
+# Allow the API app
+!apps/api/
+# But ignore its build outputs and dev files
+apps/api/dist/
+apps/api/node_modules/
+apps/api/.env*
+apps/api/*.log
+
+# Allow the Worker app
+!apps/worker/
+# But ignore its build outputs and dev files
+apps/worker/dist/
+apps/worker/node_modules/
+apps/worker/.env*
+apps/worker/*.log
+
+# Allow the Web app
+!apps/web/
+# But ignore its build outputs and dev files
+apps/web/.next/
+apps/web/node_modules/
+apps/web/.env*
+apps/web/*.log
+apps/web/tsconfig.tsbuildinfo
+
+# Allow the shared database package
+!packages/db/
+# But ignore its build outputs
+packages/db/dist/
+packages/db/node_modules/
+
+# Ignore all other packages except db
+packages/eslint-config/
+
+# Ignore version control
+.git/
 .gitignore
-.github
 
-# Build outputs (will be generated in container)
-dist
-build
-.next
-out
+# Ignore development files
+.env*
+*.log
+*.pid
+*.seed
+*.pid.lock
 
-# Documentation
-*.md
-README.md
-
-# IDE
-.vscode
-.idea
+# Ignore IDE and editor files
+.vscode/
+.idea/
 *.swp
 *.swo
+*~
 
-# Logs
-*.log
-logs
-
-# OS
+# Ignore OS files
 .DS_Store
 Thumbs.db
 
-# Testing
-coverage
-.nyc_output
+# Ignore dependency directories
+node_modules/
+**/node_modules/
 
-# Examples
-examples
+# Ignore build outputs
+dist/
+build/
+out/
+
+# Ignore test files
+**/*.test.*
+**/*.spec.*
+**/tests/
+**/test/
+coverage/
+
+# Ignore documentation
+*.md
+docs/
+
+# Ignore examples
+examples/
+
+# Ignore CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# Ignore Docker files (we don't need them in the build context)
+**/Dockerfile*
+**/.dockerignore
+docker-compose*.yml
+
+# Ignore temporary files
+tmp/
+temp/
+*.tmp
+*.temp

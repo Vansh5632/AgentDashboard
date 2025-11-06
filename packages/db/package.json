@@ -6,9 +6,9 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc && echo 'DB package built successfully'",
+    "generate": "prisma generate --schema=./schema.prisma",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "postinstall": "prisma generate --schema=./schema.prisma",
-    "postdeploy": "prisma migrate deploy"
+    "postinstall": "prisma generate --schema=./schema.prisma"
   },
   "keywords": [],
   "author": "",

@@ -16,7 +16,7 @@ const prisma = new PrismaClient();
 const CALCOM_API_BASE = process.env.CALCOM_API_BASE_URL || 'https://api.cal.com/v1';
 
 // Redis connection configuration
-// Supports both REDIS_URL (Railway format) and individual host/port/password
+// Supports both REDIS_URL and individual host/port/password
 function getRedisConnection() {
   if (process.env.REDIS_URL) {
     // Parse Redis URL (format: redis://username:password@host:port or redis://host:port)

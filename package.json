@@ -5,11 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "migrate:deploy": "cd packages/db && pnpm exec prisma migrate deploy",
-    "db:generate": "cd packages/db && pnpm exec prisma generate",
-    "api:build": "cd apps/api && pnpm build",
-    "worker:build": "cd apps/worker && pnpm build",
-    "web:build": "cd apps/web && pnpm build"
+    "db:generate": "pnpm --filter @ai_agent/db run generate"
   },
   "keywords": [],
   "author": "",
