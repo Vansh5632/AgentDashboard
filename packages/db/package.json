@@ -7,6 +7,8 @@
   "scripts": {
     "build": "tsc && echo 'DB package built successfully'",
     "generate": "prisma generate --schema=./schema.prisma",
+    "migrate": "prisma migrate deploy --schema=./schema.prisma",
+    "migrate:dev": "prisma migrate dev --schema=./schema.prisma",
     "test": "echo \"Error: no test specified\" && exit 1",
     "postinstall": "prisma generate --schema=./schema.prisma"
   },

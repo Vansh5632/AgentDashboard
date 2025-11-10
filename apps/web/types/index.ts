@@ -67,7 +67,8 @@ export type CallStatus =
   | 'NO_PICKUP' 
   | 'CALLBACK_NEEDED' 
   | 'CALLBACK_SCHEDULED' 
-  | 'CALLBACK_COMPLETED';
+  | 'CALLBACK_COMPLETED'
+  | 'APPOINTMENT_BOOKED';
 
 export type MeetingStatus = 
   | 'PENDING' 

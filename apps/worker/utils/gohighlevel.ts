@@ -28,6 +28,9 @@ export async function sendWhatsAppNotification(
     timezone: string;
     calcomEventId?: string;
     notes?: string;
+    // Additional fields for N8N/GHL format
+    ownerPhone?: string;
+    references?: any[];
   }
 ): Promise<GHLWhatsAppResponse> {
   try {
@@ -35,22 +38,30 @@ export async function sendWhatsAppNotification(
     console.log(`Webhook: ${webhookUrl}`);
     console.log(`Customer: ${messageData.customerName} (${messageData.customerPhoneNumber})`);
 
+    // Format data exactly as N8N workflow expects
+    const webhookPayload = {
+      phone: messageData.ownerPhone || messageData.customerPhoneNumber, // Owner phone number  
+      client_name: messageData.customerName,
+      triggerEvent: "Booking Made",
+      videoLink: messageData.meetingLink || 
+                 (messageData.references && messageData.references[0]?.meetingUrl) || 
+                 'Link will be provided shortly',
+      
+      // Additional useful data for the workflow
+      meetingTime: messageData.meetingTime,
+      duration: messageData.duration,
+      timezone: messageData.timezone,
+      calcomEventId: messageData.calcomEventId,
+      customerPhone: messageData.customerPhoneNumber,
+      notes: messageData.notes,
+      timestamp: new Date().toISOString(),
+    };
+
+    console.log('🔄 Sending payload to GHL:', JSON.stringify(webhookPayload, null, 2));
+
     const response = await axios.post(
       webhookUrl,
-      {
-        // Standard fields that GHL workflow expects
-        phoneNumber: messageData.customerPhoneNumber,
-        customerName: messageData.customerName,
-        meetingTime: messageData.meetingTime,
-        meetingLink: messageData.meetingLink || 'Link will be provided shortly',
-        duration: messageData.duration,
-        timezone: messageData.timezone,
-        calcomEventId: messageData.calcomEventId,
-        notes: messageData.notes,
-        // Additional metadata
-        source: 'ai_agent_booking',
-        timestamp: new Date().toISOString(),
-      },
+      webhookPayload,
       {
         timeout: 30000, // 30 second timeout
         headers: {

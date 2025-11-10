@@ -12,6 +12,8 @@ import userRouter from "./routes/user";
 import webhookRouter from './routes/webhooks';
 import meetingsRouter from './routes/meetings';
 import callsRouter from './routes/calls';
+import timeRouter from './routes/time';
+import agentsRouter from './routes/agents';
 
 const prisma = new PrismaClient();
 const app: Express = express();
@@ -91,6 +93,8 @@ app.use("/api", userRouter);
 app.use("/api",webhookRouter);
 app.use("/api", meetingsRouter);
 app.use("/api", callsRouter);
+app.use("/api", timeRouter);
+app.use("/api", agentsRouter);
 
 // Start the server
 app.listen(PORT,'0.0.0.0', () => {

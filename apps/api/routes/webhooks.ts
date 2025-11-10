@@ -81,6 +81,32 @@ router.post('/webhooks/elevenlabs/call-ended', async (req: Request, res: Respons
     const finalCallbackTime = dataCollection.Final_callback_time?.value; // The callback time requested
     const leadStatus = dataCollection.Lead_Status?.value;
     const finalState = dataCollection.Final_State?.value;
+    const meetingStatus = dataCollection.Meeting_Status?.value; // Check if appointment was booked
+    
+    // Check if appointment was successfully booked
+    const appointmentBooked = !!(
+      meetingStatus === 'Booked' ||
+      meetingStatus === 'Appointment Booked' ||
+      meetingStatus === 'APPOINTMENT_BOOKED' ||
+      leadStatus === 'Appointment Booked' ||
+      finalState === 'Appointment Booked'
+    );
+    
+    // Determine if callback is requested - NO callback if appointment is booked
+    const callbackRequested = !appointmentBooked && !!(
+      finalCallbackTime || 
+      leadStatus === 'Call Back' ||
+      leadStatus === 'Callback' ||
+      leadStatus === 'CALLBACK'
+    );
+
+    console.log(`📋 Analysis Results:`);
+    console.log(`   Meeting Status: ${meetingStatus}`);
+    console.log(`   Lead Status: ${leadStatus}`);
+    console.log(`   Final State: ${finalState}`);
+    console.log(`   Final Callback Time: ${finalCallbackTime}`);
+    console.log(`   Appointment Booked: ${appointmentBooked}`);
+    console.log(`   Callback Requested: ${callbackRequested}`);
     
     // Get call duration from metadata
     const callDuration = metadata?.call_duration_secs;
@@ -139,16 +165,32 @@ router.post('/webhooks/elevenlabs/call-ended', async (req: Request, res: Respons
     console.log(`Customer phone: ${customerPhoneNumber}, Agent phone: ${agentPhoneNumber}`);
     console.log(`Callback time: ${finalCallbackTime}, Lead status: ${leadStatus}`);
 
-    // Determine if callback is requested based on lead status or explicit callback time
-    const callbackRequested = !!(
-      finalCallbackTime || 
-      leadStatus === 'Call Back' ||
-      leadStatus === 'Callback' ||
-      leadStatus === 'CALLBACK'
-    );
+    // 3. Create immediate CallLog entry for reliability
+    const initialCallLog = await prisma.callLog.create({
+      data: {
+        conversationId: conversationId,
+        status: 'PROCESSING', // Initial status
+        summary: 'Processing...', // Will be updated by worker
+        transcript: JSON.stringify(transcript),
+        tenantId: agentBot.tenantId,
+        agentId: agentId,
+        customerPhoneNumber: customerPhoneNumber,
+        agentPhoneNumber: agentPhoneNumber,
+        agentPhoneNumberId: agentBot.agentPhoneNumberId,
+        callbackRequested: callbackRequested,
+        callbackScheduledAt: callbackRequested ? new Date(Date.now() + 2 * 60 * 60 * 1000) : null, // Default +2h
+        callbackReason: callbackRequested ? `Customer requested callback. Lead status: ${leadStatus || 'Unknown'}` : null,
+        leadStatus: leadStatus,
+        finalState: finalState,
+        callDuration: callDuration,
+      },
+    });
 
-    // 3. Add a job to the queue
+    console.log(`✅ Initial CallLog created with ID: ${initialCallLog.id}`);
+
+    // 4. Add a job to the queue for enhanced processing
     await callProcessingQueue.add('process-transcript', {
+      callLogId: initialCallLog.id, // Pass the existing call log ID
       tenantId: agentBot.tenantId,
       conversationId: conversationId,
       transcript: transcript,
@@ -164,10 +206,39 @@ router.post('/webhooks/elevenlabs/call-ended', async (req: Request, res: Respons
       fullAnalysis: analysis, // Pass full analysis for more context
     });
 
-    // 4. Respond immediately!
-    res.status(202).json({ message: 'Accepted for processing' });
+    // 5. Respond immediately!
+    res.status(202).json({ 
+      message: 'Accepted for processing',
+      callLogId: initialCallLog.id 
+    });
   } catch (error) {
     console.error('Error processing webhook:', error);
+    
+    // Try to log the error even if processing failed
+    try {
+      if (req.body?.data?.conversation_id) {
+        const conversationId = req.body.data.conversation_id;
+        const agentId = req.body.data.agent_id;
+        
+        // Create minimal error log entry
+        await prisma.callLog.create({
+          data: {
+            conversationId: conversationId,
+            status: 'WEBHOOK_ERROR',
+            summary: `Webhook processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            transcript: JSON.stringify(req.body.data.transcript || []),
+            tenantId: 'error', // Placeholder - will need manual cleanup
+            agentId: agentId,
+            leadStatus: 'ERROR',
+            finalState: 'ERROR',
+          },
+        });
+        console.log(`❌ Created error CallLog for conversation: ${conversationId}`);
+      }
+    } catch (logError) {
+      console.error('❌ Failed to create error log:', logError);
+    }
+    
     res.status(500).json({ error: 'Internal server error' });
   }
 });

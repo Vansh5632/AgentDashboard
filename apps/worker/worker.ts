@@ -2,13 +2,38 @@
 import { Worker, Job, Queue } from 'bullmq';
 import { PrismaClient } from '@ai_agent/db';
 import * as dotenv from 'dotenv';
+import path from 'path';
 import axios from 'axios';
 import { generateCallSummary, generateEmbedding, detectCallbackNeeded, parseCallbackTime } from './utils/openai';
 import { upsertCallVector, checkPineconeHealth } from './utils/pinecone';
 import { initiateCallbackCall, validatePhoneNumber, formatPhoneNumber } from './utils/elevenlabs';
 import { sendWhatsAppNotification, validateGHLWebhookUrl } from './utils/gohighlevel';
 
-dotenv.config({ path: '../../.env' }); // Adjust path to root .env
+// Load environment variables with better path resolution
+// Try multiple paths to find the .env file
+const possibleEnvPaths = [
+  path.resolve(__dirname, '../../.env'),
+  path.resolve(__dirname, '../../../.env'),
+  path.resolve(process.cwd(), '.env'),
+  path.resolve(__dirname, '.env')
+];
+
+for (const envPath of possibleEnvPaths) {
+  try {
+    const result = dotenv.config({ path: envPath });
+    if (!result.error) {
+      console.log(`Environment loaded from: ${envPath}`);
+      break;
+    }
+  } catch (error) {
+    // Continue to next path
+  }
+}
+
+// Helper function for UTC timezone display  
+function toUTCTimeString(date: Date): string {
+  return date.toISOString().replace('T', ' ').replace('Z', ' UTC');
+}
 
 const prisma = new PrismaClient();
 
@@ -25,7 +50,7 @@ function getRedisConnection() {
       host: url.hostname,
       port: parseInt(url.port) || 6379,
       password: url.password || undefined,
-      maxRetriesPerRequest: 3,
+      maxRetriesPerRequest: null, // Set to null as recommended by BullMQ
       retryStrategy(times: number) {
         const delay = Math.min(times * 50, 2000);
         return delay;
@@ -38,7 +63,7 @@ function getRedisConnection() {
     host: process.env.REDIS_HOST || 'localhost',
     port: parseInt(process.env.REDIS_PORT || '6379'),
     password: process.env.REDIS_PASSWORD || undefined,
-    maxRetriesPerRequest: 3,
+    maxRetriesPerRequest: null, // Set to null as recommended by BullMQ
     retryStrategy(times: number) {
       const delay = Math.min(times * 50, 2000);
       return delay;
@@ -71,7 +96,7 @@ const worker = new Worker('call-processing', async (job: Job) => {
 
   const { tenantId, conversationId, transcript, agentId, customerPhoneNumber, agentPhoneNumber, 
           agentPhoneNumberId, callbackRequested, callbackTime, leadStatus, finalState, 
-          callDuration, fullAnalysis } = job.data;
+          callDuration, fullAnalysis, callLogId } = job.data;
 
   if (job.name === 'process-transcript') {
     try {
@@ -95,46 +120,136 @@ const worker = new Worker('call-processing', async (job: Job) => {
         phoneNumber: customerPhoneNumber, // Store phone number for context retrieval
       });
 
-      // === STEP 4: Parse callback time if provided ===
+      // === STEP 4A: Callback Detection and Time Parsing ===
+      let finalCallbackRequested = callbackRequested;
+      let finalCallbackTime = callbackTime;
+      
+      if (!callbackRequested) {
+        console.log('\n🔍 Step 4A: ElevenLabs detected no callback request. Running backup OpenAI detection...');
+        try {
+          const backupDetection = await detectCallbackNeeded(transcript);
+          if (backupDetection.needed) {
+            console.log(`✅ Backup detection found callback needed! Reason: ${backupDetection.reason}`);
+            finalCallbackRequested = true;
+            finalCallbackTime = backupDetection.requestedTime || null;
+            
+            if (backupDetection.suggestedDateTime) {
+              finalCallbackTime = backupDetection.suggestedDateTime.toISOString();
+            }
+          } else {
+            console.log('👍 Backup detection confirms no callback needed');
+          }
+        } catch (error) {
+          console.error('⚠️ Backup callback detection failed:', error);
+        }
+      } else {
+        console.log('\n✅ Step 4A: ElevenLabs detected callback request');
+        
+        // If ElevenLabs detected callback but no time, try to extract time with OpenAI
+        if (!finalCallbackTime || finalCallbackTime === null) {
+          console.log('🔍 Step 4A: No callback time from ElevenLabs, extracting with OpenAI...');
+          try {
+            const timeDetection = await detectCallbackNeeded(transcript);
+            if (timeDetection.requestedTime) {
+              console.log(`✅ OpenAI extracted time: "${timeDetection.requestedTime}"`);
+              finalCallbackTime = timeDetection.requestedTime;
+              
+              if (timeDetection.suggestedDateTime) {
+                console.log(`📅 Parsed to datetime: ${timeDetection.suggestedDateTime.toISOString()}`);
+                // Store both natural language and parsed datetime
+                finalCallbackTime = timeDetection.requestedTime;
+              }
+            }
+          } catch (error) {
+            console.error('❌ OpenAI time extraction failed:', error);
+          }
+        }
+      }
+
+      // === STEP 4B: Parse callback time if provided ===
       let parsedCallbackTime: Date | null = null;
-      if (callbackTime && callbackRequested) {
-        console.log(`\n⏰ Step 4: Parsing callback time: "${callbackTime}"`);
-        parsedCallbackTime = await parseCallbackTime(callbackTime);
+      if (finalCallbackTime && finalCallbackRequested) {
+        console.log(`\n⏰ Step 4B: Parsing callback time: "${finalCallbackTime}"`);
+        parsedCallbackTime = await parseCallbackTime(finalCallbackTime);
         
         if (parsedCallbackTime) {
-          console.log(`✅ Callback scheduled for: ${parsedCallbackTime.toISOString()}`);
+          console.log(`✅ Callback scheduled for: ${parsedCallbackTime.toISOString()} (${toUTCTimeString(parsedCallbackTime)})`);
         } else {
           console.log('⚠️ Could not parse callback time, will default to +2 hours if needed');
         }
       }
 
-      // === STEP 5: Save to PostgreSQL ===
-      console.log('\n💾 Step 5: Saving to PostgreSQL database...');
-      const callLog = await prisma.callLog.create({
-        data: {
-          conversationId: conversationId,
-          status: callbackRequested ? 'CALLBACK_SCHEDULED' : 'COMPLETED',
-          summary: summary,
-          transcript: JSON.stringify(transcript),
-          tenantId: tenantId,
-          agentId: agentId,
-          customerPhoneNumber: customerPhoneNumber,
-          agentPhoneNumber: agentPhoneNumber,
-          agentPhoneNumberId: agentPhoneNumberId,
-          callbackRequested: callbackRequested,
-          callbackScheduledAt: parsedCallbackTime || (callbackRequested ? new Date(Date.now() + 2 * 60 * 60 * 1000) : null),
-          callbackReason: callbackRequested ? `Customer requested callback. Lead status: ${leadStatus || 'Unknown'}` : null,
-          leadStatus: leadStatus,
-          finalState: finalState,
-          callDuration: callDuration,
-        },
-      });
-      console.log(`CallLog created with ID: ${callLog.id}`);
+      // === STEP 5: Update existing CallLog in PostgreSQL ===
+      console.log('\n💾 Step 5: Updating CallLog in PostgreSQL database...');
+      
+      // Determine final status based on what happened in the call
+      let finalStatus = 'COMPLETED';
+      if (fullAnalysis?.data_collection_results) {
+        const meetingStatus = fullAnalysis.data_collection_results.Meeting_Status?.value;
+        const appointmentBooked = !!(
+          meetingStatus === 'Booked' ||
+          meetingStatus === 'Appointment Booked' ||
+          meetingStatus === 'APPOINTMENT_BOOKED' ||
+          leadStatus === 'Appointment Booked' ||
+          finalState === 'Appointment Booked'
+        );
+        
+        if (appointmentBooked) {
+          finalStatus = 'APPOINTMENT_BOOKED';
+          console.log('🎉 Appointment was booked during the call - no callback needed');
+        } else if (finalCallbackRequested) {
+          finalStatus = 'CALLBACK_SCHEDULED';
+        }
+      } else if (finalCallbackRequested) {
+        finalStatus = 'CALLBACK_SCHEDULED';
+      }
+      
+      let callLog;
+      if (callLogId) {
+        // Update existing call log
+        callLog = await prisma.callLog.update({
+          where: { id: callLogId },
+          data: {
+            status: finalStatus,
+            summary: summary,
+            callbackScheduledAt: (finalStatus === 'CALLBACK_SCHEDULED' && parsedCallbackTime) ? parsedCallbackTime : 
+                               (finalStatus === 'CALLBACK_SCHEDULED' ? new Date(Date.now() + 2 * 60 * 60 * 1000) : null),
+            callbackReason: finalStatus === 'CALLBACK_SCHEDULED' ? `Customer requested callback. Lead status: ${leadStatus || 'Unknown'}` : null,
+          },
+        });
+        console.log(`✅ CallLog updated with ID: ${callLog.id} - Status: ${finalStatus}`);
+      } else {
+        // Fallback: Create new call log (legacy support)
+        callLog = await prisma.callLog.create({
+          data: {
+            conversationId: conversationId,
+            status: finalStatus,
+            summary: summary,
+            transcript: JSON.stringify(transcript),
+            tenantId: tenantId,
+            agentId: agentId,
+            customerPhoneNumber: customerPhoneNumber,
+            agentPhoneNumber: agentPhoneNumber,
+            agentPhoneNumberId: agentPhoneNumberId,
+            callbackRequested: finalStatus === 'CALLBACK_SCHEDULED',
+            callbackScheduledAt: (finalStatus === 'CALLBACK_SCHEDULED' && parsedCallbackTime) ? parsedCallbackTime : 
+                               (finalStatus === 'CALLBACK_SCHEDULED' ? new Date(Date.now() + 2 * 60 * 60 * 1000) : null),
+            callbackReason: finalStatus === 'CALLBACK_SCHEDULED' ? `Customer requested callback. Lead status: ${leadStatus || 'Unknown'}` : null,
+            leadStatus: leadStatus,
+            finalState: finalState,
+            callDuration: callDuration,
+          },
+        });
+        console.log(`✅ CallLog created with ID: ${callLog.id} - Status: ${finalStatus}`);
+      }
 
-      // === STEP 6: Schedule callback if needed ===
-      if (callbackRequested && callLog.callbackScheduledAt) {
+      // === STEP 6: Schedule callback ONLY if needed (not for appointments) ===
+      if (finalStatus === 'CALLBACK_SCHEDULED' && callLog.callbackScheduledAt) {
         console.log(`\n📞 Step 6: Scheduling callback job...`);
+        console.log(`🕐 Callback scheduled for: ${callLog.callbackScheduledAt.toISOString()} (${toUTCTimeString(callLog.callbackScheduledAt)})`);
         const delay = callLog.callbackScheduledAt.getTime() - Date.now();
+        const delayMinutes = Math.round(delay / 60000);
+        console.log(`⏱️  Callback will execute in ${delayMinutes} minutes`);
         
         if (delay > 0) {
           await callProcessingQueue.add('execute-callback', {
@@ -171,7 +286,7 @@ const worker = new Worker('call-processing', async (job: Job) => {
           console.log('⚠️ Scheduled time was in past, rescheduled for +2 hours');
         }
       } else {
-        console.log('\n❌ No callback requested by customer');
+        console.log(`\n✅ No callback needed - appointment was booked or call completed successfully`);
       }
 
       console.log(`\n✅ Successfully processed job ${job.id}`);
@@ -179,11 +294,30 @@ const worker = new Worker('call-processing', async (job: Job) => {
         success: true, 
         summary,
         callLogId: callLog.id,
-        callbackScheduled: callbackRequested 
+        status: finalStatus,
+        callbackScheduled: finalStatus === 'CALLBACK_SCHEDULED',
+        appointmentBooked: finalStatus === 'APPOINTMENT_BOOKED'
       };
 
     } catch (error) {
       console.error(`\n❌ Job ${job.id} failed`, error);
+      
+      // Update call log status to FAILED if we have callLogId
+      if (callLogId) {
+        try {
+          await prisma.callLog.update({
+            where: { id: callLogId },
+            data: {
+              status: 'FAILED',
+              summary: `Processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            },
+          });
+          console.log(`❌ CallLog ${callLogId} marked as FAILED`);
+        } catch (updateError) {
+          console.error(`❌ Failed to update CallLog status:`, updateError);
+        }
+      }
+      
       throw error;
     }
   } else if (job.name === 'execute-callback') {
@@ -311,33 +445,6 @@ const worker = new Worker('call-processing', async (job: Job) => {
       console.error('❌ Failed to schedule legacy callback:', error);
       throw error;
     }
-  } else if (job.name === 'schedule-callback') {
-    // === Handle callback scheduling ===
-    console.log('\n📅 Processing callback scheduling...');
-    const { tenantId, conversationId, callLogId, reason } = job.data;
-    
-    try {
-      // TODO: Integrate with Cal.com or your scheduling system
-      // For now, we'll just log it
-      console.log(`Callback needed for conversation: ${conversationId}`);
-      console.log(`Reason: ${reason}`);
-      console.log(`Tenant: ${tenantId}`);
-      
-      // You can update the CallLog to mark that a callback is needed
-      await prisma.callLog.update({
-        where: { id: callLogId },
-        data: {
-          status: 'CALLBACK_NEEDED',
-          // You could add a callbackReason field to the schema
-        },
-      });
-
-      console.log('✅ Callback scheduled successfully');
-      return { success: true, callbackScheduled: true };
-    } catch (error) {
-      console.error('❌ Failed to schedule callback:', error);
-      throw error;
-    }
   }
 
   // Unknown job type
@@ -365,15 +472,35 @@ const meetingWorker = new Worker('meeting-processing', async (job: Job) => {
       tenantId,
       eventTypeId,
       start,
-      responses,
+      customerInfo, // This comes from our API endpoint
       timeZone,
       language,
       metadata,
+      agentPhone, // Agent's phone number for GHL webhook
     } = job.data;
 
     try {
-      console.log(`\n📅 Confirming meeting booking for: ${responses.email}`);
+      console.log(`\n📅 Processing meeting booking job`);
+      console.log(`Meeting ID: ${meetingId}, Tenant: ${tenantId}`);
+      console.log(`Customer: ${customerInfo?.name} (${customerInfo?.email})`);
       console.log(`Meeting time: ${start}, Event Type: ${eventTypeId}`);
+
+      // Transform customerInfo to Cal.com responses format
+      const responses = {
+        name: customerInfo?.name || 'Unknown Customer',
+        email: customerInfo?.email || 'unknown@placeholder.local',
+        phone: customerInfo?.phone || '',
+        notes: customerInfo?.notes || '',
+        // Add any additional fields Cal.com might expect
+        guests: [],
+        metadata: {
+          ...metadata,
+          customerPhone: customerInfo?.phone,
+          source: 'ai-agent-booking'
+        }
+      };
+
+      console.log(`📦 Transformed responses for Cal.com:`, JSON.stringify(responses, null, 2));
 
       // Get tenant's Cal.com API key
       const credentials = await prisma.meetingCredential.findUnique({
@@ -417,32 +544,179 @@ const meetingWorker = new Worker('meeting-processing', async (job: Job) => {
       );
 
       const booking = bookingResponse.data;
-      console.log(`✅ Cal.com booking created successfully: ${booking.id || booking.uid}`);
-      console.log('Booking response:', JSON.stringify(booking, null, 2));
+      console.log(`✅ Cal.com API call successful (HTTP ${bookingResponse.status})`);
+      console.log('📋 Full booking response:', JSON.stringify(booking, null, 2));
 
-      // Extract meeting link from Cal.com response
-      const meetingLink = booking.meetingUrl || 
-                         booking.metadata?.videoCallUrl || 
-                         booking.location ||
-                         null;
+      // Validate response structure
+      if (!booking) {
+        throw new Error('Cal.com returned empty response');
+      }
+
+      // Handle Cal.com response - it might return an array or a single object
+      let bookingData;
+      if (Array.isArray(booking)) {
+        if (booking.length === 0) {
+          throw new Error('Cal.com returned empty array - no booking created');
+        }
+        bookingData = booking[0]; // Take the first booking
+        console.log('📦 Extracted booking from array:', {
+          id: bookingData.id || bookingData.uid,
+          status: bookingData.status,
+          hasVideoUrl: !!bookingData.videoCallUrl
+        });
+      } else {
+        bookingData = booking;
+        console.log('📦 Using single booking object:', {
+          id: bookingData.id || bookingData.uid,
+          status: bookingData.status,
+          hasVideoUrl: !!bookingData.videoCallUrl
+        });
+      }
+
+      console.log('🔍 Raw bookingData structure:', {
+        hasId: !!bookingData.id,
+        hasUid: !!bookingData.uid,
+        status: bookingData.status,
+        hasError: !!bookingData.error,
+        hasMessage: !!bookingData.message,
+        keys: Object.keys(bookingData || {})
+      });
+
+      // IMPROVED: Check if booking was actually successful
+      // Cal.com sometimes returns errors even for successful bookings (e.g., user assignment issues)
+      // We need to check if a booking ID exists first before treating it as a failure
       
-      console.log(`🔗 Meeting link: ${meetingLink || 'No link provided'}`);
+      const hasBookingId = !!(bookingData.id || bookingData.uid);
+      const hasErrorMessage = bookingData.error || (bookingData.message && (
+        bookingData.message.includes('error') || 
+        bookingData.message.includes('failed') || 
+        bookingData.message.includes('invalid')
+      ));
+      
+      // If there's a booking ID, the booking was likely successful even if there are secondary errors
+      if (hasErrorMessage && !hasBookingId) {
+        const errorMsg = bookingData.error || bookingData.message;
+        console.error('❌ Cal.com booking failed - No booking ID and has error:', errorMsg);
+        
+        // Update meeting status to FAILED
+        await prisma.meeting.update({
+          where: { id: meetingId },
+          data: {
+            status: 'FAILED',
+            errorMessage: errorMsg,
+            updatedAt: new Date(),
+          },
+        });
+        
+        throw new Error(errorMsg);
+      }
+      
+      // Log warning for errors but proceed if we have a booking ID
+      if (hasErrorMessage && hasBookingId) {
+        const errorMsg = bookingData.error || bookingData.message;
+        console.warn(`⚠️ Cal.com returned error BUT booking was created (ID: ${bookingData.id || bookingData.uid}): ${errorMsg}`);
+        console.warn('🔄 Proceeding with booking since Cal.com assigned a booking ID');
+      }
+
+      // Check for successful status indicators with enhanced logic
+      const hasId = !!(bookingData.id || bookingData.uid);
+      const hasAcceptedStatus = bookingData.status === 'ACCEPTED';
+      const hasConfirmedStatus = bookingData.status === 'CONFIRMED';
+      const hasVideoCallUrl = !!bookingData.videoCallUrl;
+      const hasSuccessfulApps = bookingData.appsStatus && 
+                               bookingData.appsStatus.some((app: any) => app.success > 0);
+      
+      // A booking is successful if it has an ID AND (accepted status OR video URL OR successful app integrations)
+      const isSuccessful = hasId && (hasAcceptedStatus || hasConfirmedStatus || hasVideoCallUrl || hasSuccessfulApps);
+
+      console.log('🎯 Enhanced success check:', {
+        hasId,
+        hasAcceptedStatus,
+        hasConfirmedStatus,
+        hasVideoCallUrl,
+        hasSuccessfulApps,
+        isSuccessful,
+        actualStatus: bookingData.status,
+        bookingId: bookingData.id || bookingData.uid
+      });
+
+      if (!isSuccessful) {
+        const errorMsg = `Cal.com booking validation failed - Status: ${bookingData.status || 'Unknown'}, ID: ${hasId ? 'Present' : 'Missing'}, VideoURL: ${hasVideoCallUrl ? 'Present' : 'Missing'}`;
+        console.error('❌', errorMsg);
+        
+        await prisma.meeting.update({
+          where: { id: meetingId },
+          data: {
+            status: 'FAILED',
+            errorMessage: errorMsg,
+            updatedAt: new Date(),
+          },
+        });
+        
+        throw new Error(errorMsg);
+      }
+
+      console.log(`🎉 Cal.com booking validated successfully with ID: ${bookingData.id || bookingData.uid}, Status: ${bookingData.status}`);
+
+      // Extract meeting link from Cal.com response (comprehensive search)
+      let meetingLink = null;
+
+      // Priority 1: Direct videoCallUrl (most common)
+      if (bookingData.videoCallUrl) {
+        meetingLink = bookingData.videoCallUrl;
+        console.log('🔗 Meeting link found in videoCallUrl:', meetingLink);
+      }
+      // Priority 2: In references array
+      else if (bookingData.references && Array.isArray(bookingData.references)) {
+        for (const ref of bookingData.references) {
+          if (ref.meetingUrl) {
+            meetingLink = ref.meetingUrl;
+            console.log('🔗 Meeting link found in references.meetingUrl:', meetingLink);
+            break;
+          }
+          if (ref.type === 'google_meet_video' && ref.meetingUrl) {
+            meetingLink = ref.meetingUrl;
+            console.log('🔗 Google Meet link found in references:', meetingLink);
+            break;
+          }
+        }
+      }
+      // Priority 3: Other possible locations
+      else if (bookingData.meetingUrl) {
+        meetingLink = bookingData.meetingUrl;
+        console.log('🔗 Meeting link found in meetingUrl:', meetingLink);
+      }
+      else if (bookingData.metadata?.videoCallUrl) {
+        meetingLink = bookingData.metadata.videoCallUrl;
+        console.log('🔗 Meeting link found in metadata:', meetingLink);
+      }
+      else if (bookingData.location && bookingData.location.includes('http')) {
+        meetingLink = bookingData.location;
+        console.log('🔗 Meeting link found in location:', meetingLink);
+      }
+      
+      console.log(`🔗 Final meeting link: ${meetingLink || 'No link found'}`);
+      
+      if (!meetingLink) {
+        console.warn('⚠️ No meeting link extracted from Cal.com response, but booking still successful');
+      }
 
       // Update meeting record with success and store Cal.com response
       await prisma.meeting.update({
         where: { id: meetingId },
         data: {
           status: 'CONFIRMED',
-          calcomEventId: booking.id?.toString() || booking.uid?.toString(),
-          calcomResponse: booking, // Store full Cal.com response
+          calcomEventId: (bookingData.id || bookingData.uid)?.toString(),
+          calcomResponse: JSON.stringify(bookingData), // Convert to JSON string
           meetingLink: meetingLink,
           updatedAt: new Date(),
         },
       });
 
-      console.log(`✅ Meeting ${meetingId} confirmed successfully`);
+      console.log(`✅ Meeting ${meetingId} confirmed successfully with status CONFIRMED`);
 
       // === STEP 2: Send WhatsApp notification via GHL ===
+      let whatsappSuccessful = false;
       if (credentials.ghlWhatsappWebhook) {
         console.log('\n📱 Attempting to send WhatsApp notification...');
 
@@ -451,22 +725,28 @@ const meetingWorker = new Worker('meeting-processing', async (job: Job) => {
         
         if (validation.valid) {
           try {
+            console.log(`🔍 Agent phone from job data: ${agentPhone}`);
+            
             const whatsappResult = await sendWhatsAppNotification(
               credentials.ghlWhatsappWebhook,
               {
                 customerName: responses.name,
-                customerPhoneNumber: responses.phone || responses.phoneNumber || 'Unknown',
+                customerPhoneNumber: responses.phone || customerInfo?.phone || 'Unknown',
                 meetingTime: start,
                 meetingLink: meetingLink || undefined,
                 duration: 30, // Default duration, can be extracted from eventType if needed
                 timezone: timeZone,
-                calcomEventId: booking.id?.toString() || booking.uid?.toString(),
+                calcomEventId: (bookingData.id || bookingData.uid)?.toString(),
                 notes: responses.notes,
+                // Additional fields for N8N/GHL workflow format
+                ownerPhone: agentPhone || responses.phone, // Use agent's phone as owner phone
+                references: bookingData.references, // Pass the full references array from Cal.com
               }
             );
 
             if (whatsappResult.success) {
               console.log('✅ WhatsApp notification sent successfully');
+              whatsappSuccessful = true;
               
               // Update meeting with WhatsApp success
               await prisma.meeting.update({
@@ -518,9 +798,9 @@ const meetingWorker = new Worker('meeting-processing', async (job: Job) => {
       return { 
         success: true, 
         meetingId,
-        bookingId: booking.id || booking.uid,
+        bookingId: (bookingData.id || bookingData.uid)?.toString(),
         meetingLink: meetingLink,
-        whatsappSent: credentials.ghlWhatsappWebhook ? true : false,
+        whatsappSent: whatsappSuccessful,
         message: 'Meeting confirmed successfully'
       };
 
@@ -528,31 +808,110 @@ const meetingWorker = new Worker('meeting-processing', async (job: Job) => {
       console.error(`\n❌ Meeting job ${job.id} failed:`, error);
 
       let errorMessage = 'Unknown error occurred';
+      let shouldRetry = true; // Default to retry
+      let wasBookingCreated = false;
       
       if (error.response) {
         errorMessage = error.response.data?.message || `Cal.com API error: ${error.response.status}`;
         console.error('Cal.com API response:', error.response.data);
+        
+        // Check if the response contains a booking ID even though it returned an error
+        const responseData = error.response.data;
+        if (responseData && (responseData.id || responseData.uid || 
+            (Array.isArray(responseData) && responseData.length > 0 && (responseData[0].id || responseData[0].uid)))) {
+          console.warn('⚠️ Cal.com returned error BUT booking appears to have been created!');
+          console.warn('🔄 Will attempt to extract booking details and mark as successful...');
+          
+          try {
+            // Extract booking data from error response
+            const bookingData = Array.isArray(responseData) ? responseData[0] : responseData;
+            const bookingId = bookingData.id || bookingData.uid;
+            
+            if (bookingId) {
+              // Update meeting as successful even though Cal.com returned an error
+              await prisma.meeting.update({
+                where: { id: meetingId },
+                data: {
+                  status: 'CONFIRMED',
+                  calcomEventId: bookingId.toString(),
+                  calcomResponse: JSON.stringify(bookingData), // Convert to JSON string
+                  updatedAt: new Date(),
+                  errorMessage: `Warning: ${errorMessage} (but booking was created)`,
+                },
+              });
+              
+              console.log('✅ Booking extracted from error response and marked as CONFIRMED');
+              wasBookingCreated = true;
+              shouldRetry = false;
+              
+              return { 
+                success: true, 
+                meetingId,
+                bookingId: bookingId.toString(),
+                message: 'Booking created successfully despite API error',
+                warning: errorMessage
+              };
+            }
+          } catch (extractError) {
+            console.error('❌ Failed to extract booking from error response:', extractError);
+            // Continue with normal error handling
+          }
+        }
+        
+        // Check for permanent errors that should NOT be retried
+        const permanentErrors = [
+          'no_available_users_found_error',
+          'invalid_event_type',
+          'event_type_not_found',
+          'user_not_found',
+          'invalid_time_slot',
+          'booking_already_exists',
+          'duplicate_booking'
+        ];
+        
+        if (permanentErrors.some(permError => errorMessage.includes(permError))) {
+          console.warn(`⚠️ Permanent error detected: ${errorMessage} - Will not retry`);
+          shouldRetry = false;
+        }
       } else if (error.request) {
         errorMessage = 'Cal.com API did not respond';
+        // Network errors can be retried
+        shouldRetry = true;
       } else {
         errorMessage = error.message;
+        // Other errors can be retried
+        shouldRetry = true;
       }
 
-      // Update meeting status to FAILED
-      try {
-        await prisma.meeting.update({
-          where: { id: meetingId },
-          data: {
-            status: 'FAILED',
-            errorMessage,
-            updatedAt: new Date(),
-          },
-        });
-      } catch (updateError) {
-        console.error('Failed to update meeting status:', updateError);
+      // Update meeting status to FAILED only if booking wasn't created
+      if (!wasBookingCreated) {
+        try {
+          await prisma.meeting.update({
+            where: { id: meetingId },
+            data: {
+              status: 'FAILED',
+              errorMessage,
+              updatedAt: new Date(),
+            },
+          });
+        } catch (updateError) {
+          console.error('Failed to update meeting status:', updateError);
+        }
       }
 
-      throw error; // Re-throw to trigger retry mechanism
+      // Only re-throw if we should retry, otherwise return failure result
+      if (shouldRetry) {
+        throw error; // Re-throw to trigger retry mechanism
+      } else {
+        // Return failure result without retrying
+        console.log(`🚫 Job ${job.id} marked as permanently failed - no retries`);
+        return { 
+          success: false, 
+          error: errorMessage,
+          permanent: true,
+          meetingId
+        };
+      }
     }
   }
 
