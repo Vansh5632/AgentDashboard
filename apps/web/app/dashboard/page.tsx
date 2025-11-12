@@ -53,36 +53,58 @@ export default function DashboardPage() {
     );
   }
 
+  // Calculate trends from daily volume data
+  const calculateTrend = (data: any[], key?: string) => {
+    if (data.length < 2) return { change: "0%", trend: "up" };
+    
+    const recent = data.slice(-3).reduce((sum, item) => sum + (key ? item[key] : item.count), 0);
+    const previous = data.slice(-6, -3).reduce((sum, item) => sum + (key ? item[key] : item.count), 0);
+    
+    if (previous === 0) return { change: recent > 0 ? "+100%" : "0%", trend: "up" };
+    
+    const changePercent = Math.round(((recent - previous) / previous) * 100);
+    return {
+      change: `${changePercent >= 0 ? "+" : ""}${changePercent}%`,
+      trend: changePercent >= 0 ? "up" : "down"
+    };
+  };
+
+  const callsTrend = calculateTrend(dailyVolume);
+  const successRate = stats?.successRate || 0;
+  const successTrend = { change: "N/A", trend: "up" }; // Would need historical data
+  const callbacksTrend = { change: "N/A", trend: "up" }; // Would need historical data
+  const durationTrend = { change: "N/A", trend: "up" }; // Would need historical data
+
   const statCards = [
     {
       title: "Total Calls",
       value: stats?.totalCalls || 0,
-      change: "+12%",
-      trend: "up",
+      change: callsTrend.change,
+      trend: callsTrend.trend,
       icon: Phone,
       color: "bg-blue-500",
     },
     {
       title: "Success Rate",
-      value: `${stats?.successRate || 0}%`,
-      change: "+5%",
-      trend: "up",
+      value: `${successRate}%`,
+      change: successTrend.change,
+      trend: successTrend.trend,
       icon: CheckCircle,
       color: "bg-green-500",
     },
     {
       title: "Callbacks",
       value: stats?.callbacksRequested || 0,
-      change: "-3",
-      trend: "down",
+      change: callbacksTrend.change,
+      trend: callbacksTrend.trend,
       icon: PhoneForwarded,
       color: "bg-orange-500",
     },
     {
       title: "Avg Duration",
       value: formatDuration(stats?.avgCallDuration || 0),
-      change: "-18s",
-      trend: "down",
+      change: durationTrend.change,
+      trend: durationTrend.trend,
       icon: Clock,
       color: "bg-purple-500",
     },
@@ -111,17 +133,24 @@ export default function DashboardPage() {
               <CardContent>
                 <div className="text-2xl font-bold">{stat.value}</div>
                 <div className="mt-1 flex items-center text-xs">
-                  {stat.trend === "up" ? (
-                    <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
-                  ) : (
-                    <TrendingDown className="mr-1 h-3 w-3 text-red-500" />
+                  {stat.change !== "N/A" && (
+                    <>
+                      {stat.trend === "up" ? (
+                        <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
+                      ) : (
+                        <TrendingDown className="mr-1 h-3 w-3 text-red-500" />
+                      )}
+                      <span
+                        className={stat.trend === "up" ? "text-green-500" : "text-red-500"}
+                      >
+                        {stat.change}
+                      </span>
+                      <span className="ml-1 text-gray-500">from last week</span>
+                    </>
                   )}
-                  <span
-                    className={stat.trend === "up" ? "text-green-500" : "text-red-500"}
-                  >
-                    {stat.change}
-                  </span>
-                  <span className="ml-1 text-gray-500">from last week</span>
+                  {stat.change === "N/A" && (
+                    <span className="text-gray-400">Trend data unavailable</span>
+                  )}
                 </div>
               </CardContent>
             </Card>

@@ -5,8 +5,8 @@ const nextConfig = {
   compress: true,
   output: 'standalone', // Enable standalone output for Docker
   env: {
-    NEXT_PUBLIC_API_URL:
-      process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
+    // In development: full URL, In production: can use relative /api or custom base URL
+    NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL || undefined,
   },
 };
 

@@ -1,14 +1,17 @@
 import axios from 'axios';
 
-// Get API URL from environment - should be just the domain without any path
-// Example: https://api-production-8446.up.railway.app (NO trailing slash, NO /api, NO /health)
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001') // Remove any /health path if accidentally included
+// Dynamic API URL configuration
+// In development: uses full URL (e.g., http://localhost:3001/api)
+// In production (behind Nginx): uses relative URL (/api)
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 
+  (process.env.NODE_ENV === 'production' ? '/api' : 'http://localhost:3001/api');
 
 console.log('🌐 API Client Configuration:');
-console.log('  Base URL:', `${API_URL}/api`);
+console.log('  Environment:', process.env.NODE_ENV || 'development');
+console.log('  Base URL:', API_BASE_URL);
 
 const api = axios.create({
-  baseURL: `${API_URL}/api`,
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -96,6 +99,9 @@ export const agentsApi = {
   create: (data: any) => api.post('/agents', data),
   update: (id: string, data: any) => api.put(`/agents/${id}`, data),
   delete: (id: string) => api.delete(`/agents/${id}`),
+  syncFromElevenLabs: () => api.get('/agents/sync-from-elevenlabs'),
+  getElevenLabsAgents: () => api.get('/agents/elevenlabs-agents'),
+  testAuth: (agentId: string) => api.post('/agents/test-auth', { agentId }),
 };
 
 // Calls API
@@ -128,6 +134,11 @@ export const credentialsApi = {
   setElevenLabs: (apiKey: string) => api.post('/credentials/elevenlabs', { apiKey }),
   getCalcom: () => api.get('/credentials/calcom'),
   setCalcom: (data: any) => api.post('/credentials/calcom', data),
+};
+
+// Time API
+export const timeApi = {
+  getUtc: () => api.get('/time/utc'),
 };
 
 export default api;
