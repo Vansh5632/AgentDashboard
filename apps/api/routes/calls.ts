@@ -203,17 +203,33 @@ router.get('/calls/stats/overview', authenticate, async (req: Request, res: Resp
       },
     });
 
-    // Get daily call volume for chart
-    const dailyCalls = await prisma.$queryRaw<Array<{ date: string; count: bigint }>>`
-      SELECT 
-        DATE("createdAt") as date,
-        COUNT(*) as count
-      FROM "CallLog"
-      WHERE "tenantId" = ${tenantId}
-        AND "createdAt" >= ${startDate}
-      GROUP BY DATE("createdAt")
-      ORDER BY date ASC
-    `;
+    // Get daily call volume for chart using Prisma aggregation
+    const callsInDateRange = await prisma.callLog.findMany({
+      where: { 
+        tenantId,
+        createdAt: { gte: startDate }
+      },
+      select: {
+        createdAt: true,
+      },
+      orderBy: {
+        createdAt: 'asc'
+      }
+    });
+
+    // Group calls by date
+    const dailyCallsMap = new Map<string, number>();
+    
+    callsInDateRange.forEach(call => {
+      const dateKey = call.createdAt.toISOString().split('T')[0]; // Get YYYY-MM-DD format
+      dailyCallsMap.set(dateKey, (dailyCallsMap.get(dateKey) || 0) + 1);
+    });
+
+    // Convert map to array format
+    const dailyCalls = Array.from(dailyCallsMap.entries()).map(([date, count]) => ({
+      date,
+      count,
+    })).sort((a, b) => a.date.localeCompare(b.date));
 
     res.json({
       overview: {
@@ -224,10 +240,7 @@ router.get('/calls/stats/overview', authenticate, async (req: Request, res: Resp
         successRate: totalCalls > 0 ? ((completedCalls / totalCalls) * 100).toFixed(1) : '0',
         avgCallDuration: avgDuration._avg.callDuration ? Math.round(avgDuration._avg.callDuration) : 0,
       },
-      dailyVolume: dailyCalls.map((row: { date: string; count: bigint }) => ({
-        date: row.date,
-        count: Number(row.count),
-      })),
+      dailyVolume: dailyCalls,
     });
 
   } catch (error: any) {
