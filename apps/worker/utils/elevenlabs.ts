@@ -5,6 +5,24 @@ import { querySimilarCallsByPhone } from './pinecone';
 
 const prisma = new PrismaClient();
 
+/**
+ * Retrieve ElevenLabs API key from database for a given tenant
+ */
+async function getElevenLabsApiKey(tenantId: string): Promise<string> {
+  const credential = await prisma.credential.findFirst({
+    where: { 
+      serviceName: 'ELEVENLABS',
+      user: { tenantId }
+    }
+  });
+
+  if (!credential) {
+    throw new Error(`ElevenLabs API key not configured for tenant ${tenantId}. Please configure the API key in the dashboard.`);
+  }
+
+  return credential.encryptedValue;
+}
+
 interface CallbackRequest {
   customerPhoneNumber: string;
   agentId: string;
@@ -30,13 +48,9 @@ interface PhoneNumber {
 /**
  * Fetch all phone numbers from ElevenLabs account
  */
-export async function fetchElevenLabsPhoneNumbers(): Promise<PhoneNumber[]> {
+export async function fetchElevenLabsPhoneNumbers(tenantId: string): Promise<PhoneNumber[]> {
   try {
-    const apiKey = process.env.ELEVENLABS_API_KEY;
-    
-    if (!apiKey) {
-      throw new Error('ELEVENLABS_API_KEY is not set in environment variables');
-    }
+    const apiKey = await getElevenLabsApiKey(tenantId);
 
     console.log('📞 Fetching phone numbers from ElevenLabs...');
 
@@ -72,6 +86,7 @@ export async function fetchElevenLabsPhoneNumbers(): Promise<PhoneNumber[]> {
  */
 export async function getAgentPhoneNumberId(
   agentId: string,
+  tenantId: string,
   phoneNumber?: string
 ): Promise<string | null> {
   try {
@@ -88,7 +103,7 @@ export async function getAgentPhoneNumberId(
 
     // If not in database, fetch from ElevenLabs
     console.log('🔍 Phone number ID not cached, fetching from ElevenLabs...');
-    const phoneNumbers = await fetchElevenLabsPhoneNumbers();
+    const phoneNumbers = await fetchElevenLabsPhoneNumbers(tenantId);
     
     // Try to find matching phone number
     const targetPhone = phoneNumber || agentBot?.phoneNumber;
@@ -143,18 +158,14 @@ export async function initiateCallbackCall({
   tenantId
 }: CallbackRequest): Promise<ElevenLabsOutboundResponse> {
   try {
-    const apiKey = process.env.ELEVENLABS_API_KEY;
-    
-    if (!apiKey) {
-      throw new Error('ELEVENLABS_API_KEY is not set in environment variables');
-    }
+    const apiKey = await getElevenLabsApiKey(tenantId);
 
     console.log(`📞 Initiating callback to ${customerPhoneNumber} with agent ${agentId}`);
 
     // Get phone number ID if not provided
     let phoneNumberId = agentPhoneNumberId;
     if (!phoneNumberId) {
-      const fetchedId = await getAgentPhoneNumberId(agentId, agentPhoneNumber);
+      const fetchedId = await getAgentPhoneNumberId(agentId, tenantId, agentPhoneNumber);
       if (!fetchedId) {
         throw new Error('Could not determine agent phone number ID for outbound call');
       }
@@ -226,13 +237,9 @@ export async function initiateCallbackCall({
 /**
  * Get the status of an ongoing conversation
  */
-export async function getConversationStatus(conversationId: string): Promise<any> {
+export async function getConversationStatus(conversationId: string, tenantId: string): Promise<any> {
   try {
-    const apiKey = process.env.ELEVENLABS_API_KEY;
-    
-    if (!apiKey) {
-      throw new Error('ELEVENLABS_API_KEY is not set in environment variables');
-    }
+    const apiKey = await getElevenLabsApiKey(tenantId);
 
     const response = await axios.get(
       `https://api.elevenlabs.io/v1/convai/conversation/${conversationId}`,
