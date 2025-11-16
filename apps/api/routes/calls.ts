@@ -206,12 +206,12 @@ router.get('/calls/stats/overview', authenticate, async (req: Request, res: Resp
     // Get daily call volume for chart
     const dailyCalls = await prisma.$queryRaw<Array<{ date: string; count: bigint }>>`
       SELECT 
-        DATE(created_at) as date,
+        DATE("createdAt") as date,
         COUNT(*) as count
       FROM "CallLog"
-      WHERE tenant_id = ${tenantId}
-        AND created_at >= ${startDate}
-      GROUP BY DATE(created_at)
+      WHERE "tenantId" = ${tenantId}
+        AND "createdAt" >= ${startDate}
+      GROUP BY DATE("createdAt")
       ORDER BY date ASC
     `;
 
