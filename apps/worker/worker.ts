@@ -6,7 +6,7 @@ import path from 'path';
 import axios from 'axios';
 import { generateCallSummary, generateEmbedding, detectCallbackNeeded, parseCallbackTime } from './utils/openai';
 import { upsertCallVector, checkPineconeHealth } from './utils/pinecone';
-import { initiateCallbackCall, validatePhoneNumber, formatPhoneNumber } from './utils/elevenlabs';
+import { initiateCallbackCall, validatePhoneNumber, formatPhoneNumber, validateBusinessHoursCallback, isCurrentTimeWithinBusinessHours, getNextBusinessHour } from './utils/elevenlabs';
 import { sendWhatsAppNotification, validateGHLWebhookUrl } from './utils/gohighlevel';
 
 // Load environment variables with better path resolution
@@ -173,9 +173,22 @@ const worker = new Worker('call-processing', async (job: Job) => {
         parsedCallbackTime = await parseCallbackTime(finalCallbackTime);
         
         if (parsedCallbackTime) {
-          console.log(`✅ Callback scheduled for: ${parsedCallbackTime.toISOString()} (${toUTCTimeString(parsedCallbackTime)})`);
+          // Validate business hours and adjust if necessary
+          console.log(`\n🕒 Step 4C: Validating business hours for callback...`);
+          const businessHoursValidation = validateBusinessHoursCallback(parsedCallbackTime);
+          
+          if (!businessHoursValidation.isValid) {
+            console.log(`⚠️ Callback time outside business hours (9 AM - 9 PM SGT)`);
+            console.log(`📅 Original time: ${parsedCallbackTime.toISOString()} (${toUTCTimeString(parsedCallbackTime)})`);
+            console.log(`📅 ${businessHoursValidation.reason}`);
+            parsedCallbackTime = businessHoursValidation.adjustedTime;
+          } else {
+            console.log(`✅ Callback time is within business hours`);
+          }
+          
+          console.log(`✅ Final callback scheduled for: ${parsedCallbackTime.toISOString()} (${toUTCTimeString(parsedCallbackTime)})`);
         } else {
-          console.log('⚠️ Could not parse callback time, will default to +2 hours if needed');
+          console.log('⚠️ Could not parse callback time, will default to next business hour if needed');
         }
       }
 
@@ -213,7 +226,16 @@ const worker = new Worker('call-processing', async (job: Job) => {
             status: finalStatus,
             summary: summary,
             callbackScheduledAt: (finalStatus === 'CALLBACK_SCHEDULED' && parsedCallbackTime) ? parsedCallbackTime : 
-                               (finalStatus === 'CALLBACK_SCHEDULED' ? new Date(Date.now() + 2 * 60 * 60 * 1000) : null),
+                               (finalStatus === 'CALLBACK_SCHEDULED' ? (() => {
+                                 // Default to next business hour if no time specified
+                                 const defaultTime = new Date(Date.now() + 2 * 60 * 60 * 1000);
+                                 const validation = validateBusinessHoursCallback(defaultTime);
+                                 console.log(`⚠️ No specific callback time, using default with business hours validation`);
+                                 if (!validation.isValid) {
+                                   console.log(`📅 ${validation.reason}`);
+                                 }
+                                 return validation.adjustedTime;
+                               })() : null),
             callbackReason: finalStatus === 'CALLBACK_SCHEDULED' ? `Customer requested callback. Lead status: ${leadStatus || 'Unknown'}` : null,
           },
         });
@@ -233,7 +255,16 @@ const worker = new Worker('call-processing', async (job: Job) => {
             agentPhoneNumberId: agentPhoneNumberId,
             callbackRequested: finalStatus === 'CALLBACK_SCHEDULED',
             callbackScheduledAt: (finalStatus === 'CALLBACK_SCHEDULED' && parsedCallbackTime) ? parsedCallbackTime : 
-                               (finalStatus === 'CALLBACK_SCHEDULED' ? new Date(Date.now() + 2 * 60 * 60 * 1000) : null),
+                               (finalStatus === 'CALLBACK_SCHEDULED' ? (() => {
+                                 // Default to next business hour if no time specified
+                                 const defaultTime = new Date(Date.now() + 2 * 60 * 60 * 1000);
+                                 const validation = validateBusinessHoursCallback(defaultTime);
+                                 console.log(`⚠️ No specific callback time, using default with business hours validation`);
+                                 if (!validation.isValid) {
+                                   console.log(`📅 ${validation.reason}`);
+                                 }
+                                 return validation.adjustedTime;
+                               })() : null),
             callbackReason: finalStatus === 'CALLBACK_SCHEDULED' ? `Customer requested callback. Lead status: ${leadStatus || 'Unknown'}` : null,
             leadStatus: leadStatus,
             finalState: finalState,
@@ -267,23 +298,33 @@ const worker = new Worker('call-processing', async (job: Job) => {
           });
           console.log(`✅ Callback job scheduled for ${new Date(Date.now() + delay).toISOString()}`);
         } else {
-          // If scheduled time is in the past, schedule for 2 hours from now
-          const futureTime = new Date(Date.now() + 2 * 60 * 60 * 1000);
+          // If scheduled time is in the past, schedule for next business hour
+          const defaultTime = new Date(Date.now() + 2 * 60 * 60 * 1000);
+          const validation = validateBusinessHoursCallback(defaultTime);
+          const futureTime = validation.adjustedTime;
+          
           await prisma.callLog.update({
             where: { id: callLog.id },
             data: { callbackScheduledAt: futureTime },
           });
           
+          const newDelay = futureTime.getTime() - Date.now();
           await callProcessingQueue.add('execute-callback', {
             callLogId: callLog.id,
             tenantId,
             conversationId,
             agentId,
           }, {
-            delay: 2 * 60 * 60 * 1000,
+            delay: newDelay,
             attempts: 3,
           });
-          console.log('⚠️ Scheduled time was in past, rescheduled for +2 hours');
+          
+          if (!validation.isValid) {
+            console.log(`⚠️ Scheduled time was in past, rescheduled with business hours validation`);
+            console.log(`📅 ${validation.reason}`);
+          } else {
+            console.log(`⚠️ Scheduled time was in past, rescheduled for +2 hours`);
+          }
         }
       } else {
         console.log(`\n✅ No callback needed - appointment was booked or call completed successfully`);
@@ -366,6 +407,44 @@ const worker = new Worker('call-processing', async (job: Job) => {
         throw new Error('Invalid phone number format');
       }
 
+      // Check if current time is within business hours
+      if (!isCurrentTimeWithinBusinessHours()) {
+        console.log('⏰ Current time is outside business hours (9 AM - 9 PM SGT)');
+        
+        // Reschedule for next business hour
+        const nextBusinessHour = getNextBusinessHour();
+        const delay = nextBusinessHour.getTime() - Date.now();
+        
+        await prisma.callLog.update({
+          where: { id: callLogId },
+          data: { 
+            callbackScheduledAt: nextBusinessHour,
+            status: 'CALLBACK_SCHEDULED'
+          },
+        });
+        
+        // Reschedule the job
+        await callProcessingQueue.add('execute-callback', {
+          callLogId: callLogId,
+          tenantId,
+          conversationId,
+          agentId,
+        }, {
+          delay: delay,
+          attempts: 3,
+        });
+        
+        console.log(`📅 Callback rescheduled to next business hour: ${nextBusinessHour.toISOString()}`);
+        console.log(`⏱️  Will retry in ${Math.round(delay / 60000)} minutes`);
+        
+        return { 
+          success: true, 
+          rescheduled: true, 
+          nextAttempt: nextBusinessHour.toISOString(),
+          reason: 'Outside business hours - rescheduled to 9 AM - 9 PM SGT'
+        };
+      }
+
       const formattedPhoneNumber = formatPhoneNumber(callLog.customerPhoneNumber);
       console.log(`📞 Initiating callback to: ${formattedPhoneNumber}`);
       console.log(`👤 Customer: ${callLog.tenant.name}`);
@@ -428,16 +507,23 @@ const worker = new Worker('call-processing', async (job: Job) => {
     
     try {
       // Update the CallLog to mark that a callback is needed
+      const defaultTime = new Date(Date.now() + 2 * 60 * 60 * 1000);
+      const validation = validateBusinessHoursCallback(defaultTime);
+      
       await prisma.callLog.update({
         where: { id: callLogId },
         data: {
           status: 'CALLBACK_NEEDED',
           callbackRequested: true,
           callbackReason: reason,
-          // Default to 2 hours from now if using legacy system
-          callbackScheduledAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+          // Apply business hours validation to legacy system default time
+          callbackScheduledAt: validation.adjustedTime,
         },
       });
+
+      if (!validation.isValid) {
+        console.log(`📅 Legacy callback adjusted for business hours: ${validation.reason}`);
+      }
 
       console.log('✅ Legacy callback scheduled successfully');
       return { success: true, callbackScheduled: true };

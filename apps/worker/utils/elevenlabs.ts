@@ -5,6 +5,11 @@ import { querySimilarCallsByPhone } from './pinecone';
 
 const prisma = new PrismaClient();
 
+// Business hours constants for Singapore time
+const SINGAPORE_TIMEZONE = 'Asia/Singapore';
+const BUSINESS_HOURS_START = 9; // 9 AM
+const BUSINESS_HOURS_END = 21; // 9 PM (21:00 in 24-hour format)
+
 /**
  * Retrieve ElevenLabs API key from database for a given tenant
  */
@@ -143,6 +148,29 @@ export async function getAgentPhoneNumberId(
     console.error('❌ Error getting agent phone number ID:', error);
     return null;
   }
+}
+
+/**
+ * Check if current time is within business hours for callback execution
+ */
+export function isCurrentTimeWithinBusinessHours(): boolean {
+  const now = new Date();
+  return isWithinBusinessHours(now);
+}
+
+/**
+ * Get the next available business hour for immediate callback execution
+ */
+export function getNextBusinessHour(): Date {
+  const now = new Date();
+  return adjustToBusinessHours(now);
+}
+
+/**
+ * Get a human-readable description of business hours
+ */
+export function getBusinessHoursDescription(): string {
+  return `${BUSINESS_HOURS_START}:00 AM to ${BUSINESS_HOURS_END - 12}:00 PM Singapore Time (SGT)`;
 }
 
 /**
@@ -296,4 +324,84 @@ export function formatPhoneNumber(phoneNumber: string): string {
   }
   
   return cleaned;
+}
+
+/**
+ * Check if a callback time falls within business hours (9am to 9pm Singapore time)
+ */
+export function isWithinBusinessHours(callbackTime: Date): boolean {
+  // Get the hour in Singapore timezone
+  const hour = parseInt(callbackTime.toLocaleString("en-US", {
+    timeZone: SINGAPORE_TIMEZONE,
+    hour: '2-digit',
+    hour12: false
+  }));
+  
+  const withinHours = hour >= BUSINESS_HOURS_START && hour < BUSINESS_HOURS_END;
+  
+  console.log(`⏰ Business hours check: ${callbackTime.toISOString()} → SGT Hour: ${hour} → ${withinHours ? '✅ ALLOWED' : '❌ OUTSIDE HOURS'}`);
+  
+  return withinHours;
+}
+
+/**
+ * Adjust callback time to next business hour if outside business hours
+ */
+export function adjustToBusinessHours(requestedTime: Date): Date {
+  // Get hour in Singapore timezone
+  const sgHour = parseInt(requestedTime.toLocaleString("en-US", {
+    timeZone: SINGAPORE_TIMEZONE,
+    hour: '2-digit',
+    hour12: false
+  }));
+  
+  // If already within business hours, return as is
+  if (sgHour >= BUSINESS_HOURS_START && sgHour < BUSINESS_HOURS_END) {
+    return requestedTime;
+  }
+  
+  // Calculate offset to next business hour
+  let hoursToAdd = 0;
+  
+  if (sgHour < BUSINESS_HOURS_START) {
+    // Before 9 AM - go to 9 AM same day
+    hoursToAdd = BUSINESS_HOURS_START - sgHour;
+    console.log(`⏰ Time before business hours, adding ${hoursToAdd} hours to reach 9 AM`);
+  } else {
+    // After 9 PM - go to 9 AM next day  
+    hoursToAdd = (24 - sgHour) + BUSINESS_HOURS_START;
+    console.log(`⏰ Time after business hours, adding ${hoursToAdd} hours to reach 9 AM next day`);
+  }
+  
+  // Add the calculated hours to get the adjusted time
+  const adjustedTime = new Date(requestedTime.getTime() + (hoursToAdd * 60 * 60 * 1000));
+  
+  return adjustedTime;
+}
+
+/**
+ * Validate and adjust callback scheduling to ensure it's within business hours
+ */
+export function validateBusinessHoursCallback(scheduledTime: Date): {
+  isValid: boolean;
+  adjustedTime: Date;
+  reason?: string;
+} {
+  const isValid = isWithinBusinessHours(scheduledTime);
+  
+  if (isValid) {
+    return {
+      isValid: true,
+      adjustedTime: scheduledTime
+    };
+  }
+  
+  const adjustedTime = adjustToBusinessHours(scheduledTime);
+  const singaporeTimeStr = adjustedTime.toLocaleString("en-US", {timeZone: SINGAPORE_TIMEZONE});
+  
+  return {
+    isValid: false,
+    adjustedTime,
+    reason: `Callback time adjusted to business hours (9 AM - 9 PM SGT). New time: ${singaporeTimeStr} SGT`
+  };
 }
