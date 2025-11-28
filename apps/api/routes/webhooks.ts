@@ -112,56 +112,82 @@ router.post('/webhooks/elevenlabs/call-ended', async (req: Request, res: Respons
     const callDuration = metadata?.call_duration_secs;
 
     // Look up or create the agent bot
-    // First try to find existing agent by elevenLabsAgentId
-    let agentBot = await prisma.agentBot.findFirst({
-      where: { elevenLabsAgentId: agentId },
-      select: { 
-        id: true,
-        tenantId: true, 
-        name: true,
-        agentPhoneNumberId: true 
-      }
+    // First check AgentMapping to determine which tenant this agent belongs to
+    console.log(`🔍 Looking up agent mapping for agent_id: ${agentId}`);
+    
+    const agentMapping = await prisma.agentMapping.findUnique({
+      where: { agentId },
     });
 
-    // If agent not found, we need to find the tenant by matching the agent phone number
-    // or create a new entry. For now, let's assume we have a default tenant or 
-    // the system should have at least one tenant with credentials
-    if (!agentBot) {
-      console.log(`Agent bot not found for agent_id: ${agentId}, will auto-create...`);
-      
-      // Find the tenant - for MVP, we'll use the first tenant with ElevenLabs credentials
-      const credential = await prisma.credential.findFirst({
-        where: { serviceName: 'ELEVENLABS' },
-        include: { user: { include: { tenant: true } } }
-      });
+    let tenantId: string;
+    let agentBot: any;
 
-      if (!credential) {
-        console.error('No ElevenLabs credentials found in system');
-        return res.status(404).json({ error: 'No ElevenLabs credentials configured' });
-      }
-
-      const tenantId = credential.user.tenantId;
+    if (agentMapping) {
+      // Agent is mapped - use the mapped tenant
+      tenantId = agentMapping.tenantId;
+      console.log(`✅ Found agent mapping: ${agentId} → tenant ${tenantId}`);
       
-      // Auto-create the agent bot entry
-      agentBot = await prisma.agentBot.create({
-        data: {
-          name: `Agent ${agentId.slice(-8)}`, // Use last 8 chars of agent_id as name
+      // Get or create agent bot for this tenant
+      agentBot = await prisma.agentBot.findFirst({
+        where: { 
           elevenLabsAgentId: agentId,
-          phoneNumber: agentPhoneNumber,
-          tenantId: tenantId,
+          tenantId 
         },
-        select: {
+        select: { 
           id: true,
-          tenantId: true,
+          tenantId: true, 
           name: true,
-          agentPhoneNumberId: true
+          agentPhoneNumberId: true 
         }
       });
+
+      if (!agentBot) {
+        agentBot = await prisma.agentBot.create({
+          data: {
+            name: agentMapping.agentName || `Agent ${agentId.slice(-8)}`,
+            elevenLabsAgentId: agentId,
+            phoneNumber: agentPhoneNumber,
+            tenantId: tenantId,
+          },
+          select: {
+            id: true,
+            tenantId: true,
+            name: true,
+            agentPhoneNumberId: true
+          }
+        });
+        console.log(`✅ Auto-created agent bot for mapped agent ${agentId}`);
+      }
+    } else {
+      // No mapping found - try legacy lookup by elevenLabsAgentId
+      console.log(`⚠️ No agent mapping found for ${agentId}, trying legacy lookup...`);
       
-      console.log(`✅ Auto-created agent bot: ${agentBot.name} for tenant: ${tenantId}`);
+      agentBot = await prisma.agentBot.findFirst({
+        where: { elevenLabsAgentId: agentId },
+        select: { 
+          id: true,
+          tenantId: true, 
+          name: true,
+          agentPhoneNumberId: true 
+        }
+      });
+
+      if (agentBot) {
+        tenantId = agentBot.tenantId;
+        console.log(`⚠️ Using legacy agent bot: ${agentId} → tenant ${tenantId}`);
+        console.log(`💡 Recommendation: Create an AgentMapping for this agent`);
+      } else {
+        // Agent not found at all - reject webhook
+        console.error(`❌ Agent ${agentId} not found in AgentMapping or AgentBot tables`);
+        return res.status(404).json({ 
+          error: 'Agent not mapped',
+          message: `Agent ${agentId} is not mapped to any tenant`,
+          hint: 'Create an agent mapping first: POST /api/agent-mappings'
+        });
+      }
     }
 
-    console.log(`Processing call for tenant: ${agentBot.tenantId}, agent: ${agentBot.name}`);
+    console.log(`Processing call for tenant: ${tenantId}, agent: ${agentBot.name}`);
     console.log(`Customer phone: ${customerPhoneNumber}, Agent phone: ${agentPhoneNumber}`);
     console.log(`Callback time: ${finalCallbackTime}, Lead status: ${leadStatus}`);
 
@@ -172,7 +198,7 @@ router.post('/webhooks/elevenlabs/call-ended', async (req: Request, res: Respons
         status: 'PROCESSING', // Initial status
         summary: 'Processing...', // Will be updated by worker
         transcript: JSON.stringify(transcript),
-        tenantId: agentBot.tenantId,
+        tenantId: tenantId,
         agentId: agentId,
         customerPhoneNumber: customerPhoneNumber,
         agentPhoneNumber: agentPhoneNumber,
@@ -191,7 +217,7 @@ router.post('/webhooks/elevenlabs/call-ended', async (req: Request, res: Respons
     // 4. Add a job to the queue for enhanced processing
     await callProcessingQueue.add('process-transcript', {
       callLogId: initialCallLog.id, // Pass the existing call log ID
-      tenantId: agentBot.tenantId,
+      tenantId: tenantId,
       conversationId: conversationId,
       transcript: transcript,
       agentId: agentId,

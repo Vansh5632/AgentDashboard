@@ -20,44 +20,49 @@ declare global {
 }
 
 /**
- * Verify if agent belongs to a specific ElevenLabs account
+ * Verify if agent exists using shared API key
  */
-async function verifyAgentOwnership(
-  agentId: string, 
-  apiKey: string
-): Promise<boolean> {
+async function verifyAgentExists(agentId: string): Promise<{ exists: boolean; agentData?: any }> {
   try {
-    console.log(`🔍 Verifying agent ${agentId} ownership...`);
+    const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
+    
+    if (!elevenLabsApiKey) {
+      console.warn('⚠️ ELEVENLABS_API_KEY not set in environment');
+      return { exists: false };
+    }
+
+    console.log(`🔍 Verifying agent ${agentId} exists...`);
 
     const response = await axios.get(
       'https://api.elevenlabs.io/v1/convai/agents',
       {
         headers: {
-          'xi-api-key': apiKey
+          'xi-api-key': elevenLabsApiKey
         },
         timeout: 10000
       }
     );
 
     const agents = response.data.agents || response.data || [];
-    const agentExists = agents.some((agent: any) => agent.agent_id === agentId);
+    const agentData = agents.find((agent: any) => agent.agent_id === agentId);
     
-    if (agentExists) {
-      console.log(`✅ Agent ${agentId} verified for account`);
-      return true;
+    if (agentData) {
+      console.log(`✅ Agent ${agentId} found`);
+      return { exists: true, agentData };
     } else {
-      console.log(`❌ Agent ${agentId} not found in account`);
-      return false;
+      console.log(`❌ Agent ${agentId} not found`);
+      return { exists: false };
     }
   } catch (error: any) {
-    console.error('❌ Error verifying agent ownership:', error.message);
-    return false;
+    console.error('❌ Error verifying agent:', error.message);
+    return { exists: false };
   }
 }
 
 /**
  * Agent Authentication Middleware
- * Authenticates ElevenLabs agents by verifying they belong to a tenant's ElevenLabs account
+ * Authenticates agents using AgentMapping table (agent_id → tenant mapping)
+ * Uses shared API key from environment for verification
  */
 export async function agentAuthenticate(req: Request, res: Response, next: NextFunction) {
   try {
@@ -76,107 +81,93 @@ export async function agentAuthenticate(req: Request, res: Response, next: NextF
 
     console.log(`🤖 Authenticating agent: ${agentId}`);
 
-    // First, check if agent exists in our database
+    // STEP 1: Check AgentMapping table (primary authentication method)
+    const mapping = await prisma.agentMapping.findUnique({
+      where: { agentId },
+      include: {
+        tenant: { select: { name: true } },
+        user: { select: { email: true } }
+      }
+    });
+
+    if (mapping) {
+      console.log(`✅ Found agent mapping: ${agentId} → tenant ${mapping.tenantId}`);
+      
+      // Get or create AgentBot entry
+      let agentBot = await prisma.agentBot.findFirst({
+        where: { 
+          elevenLabsAgentId: agentId,
+          tenantId: mapping.tenantId 
+        }
+      });
+
+      if (!agentBot) {
+        // Auto-create AgentBot if not exists
+        agentBot = await prisma.agentBot.create({
+          data: {
+            name: mapping.agentName || `Agent ${agentId.slice(-8)}`,
+            elevenLabsAgentId: agentId,
+            tenantId: mapping.tenantId,
+          }
+        });
+        console.log(`🤖 Auto-created AgentBot for mapped agent ${agentId}`);
+      }
+
+      req.agent = {
+        id: agentBot.id,
+        elevenLabsAgentId: agentId,
+        tenantId: mapping.tenantId,
+        name: agentBot.name
+      };
+
+      console.log(`✅ Agent ${agentId} authenticated via AgentMapping`);
+      return next();
+    }
+
+    // STEP 2: Fallback - check if agent exists in AgentBot table (legacy support)
+    console.log(`🔍 No mapping found, checking AgentBot table...`);
+    
     let agentBot = await prisma.agentBot.findFirst({
       where: { elevenLabsAgentId: agentId }
     });
 
     if (agentBot) {
-      // Agent exists in database - verify it still belongs to the tenant
-      const credential = await prisma.credential.findFirst({
-        where: { 
-          serviceName: 'ELEVENLABS',
-          user: { tenantId: agentBot.tenantId }
-        }
-      });
+      console.log(`✅ Found agent in AgentBot table (legacy): ${agentId} → tenant ${agentBot.tenantId}`);
+      
+      req.agent = {
+        id: agentBot.id,
+        elevenLabsAgentId: agentId,
+        tenantId: agentBot.tenantId,
+        name: agentBot.name
+      };
 
-      if (credential) {
-        const isValid = await verifyAgentOwnership(agentId, credential.encryptedValue);
-        if (isValid) {
-          req.agent = {
-            id: agentBot.id,
-            elevenLabsAgentId: agentBot.elevenLabsAgentId || agentId,
-            tenantId: agentBot.tenantId,
-            name: agentBot.name
-          };
-          console.log(`✅ Agent ${agentId} authenticated for tenant ${agentBot.tenantId}`);
-          return next();
-        }
-      }
+      console.log(`⚠️ Warning: Agent ${agentId} authenticated via legacy method. Consider creating an AgentMapping.`);
+      return next();
     }
 
-    // Agent not in database or verification failed - check all ElevenLabs accounts
-    console.log(`🔍 Agent not found in database, checking all ElevenLabs accounts...`);
+    // STEP 3: Agent not mapped - reject with helpful error
+    console.log(`❌ Agent ${agentId} not mapped to any tenant`);
     
-    const credentials = await prisma.credential.findMany({
-      where: { serviceName: 'ELEVENLABS' },
-      include: { user: { include: { tenant: true } } }
-    });
-
-    if (credentials.length === 0) {
+    // Optionally verify if agent exists in ElevenLabs to give better error message
+    const { exists, agentData } = await verifyAgentExists(agentId);
+    
+    if (exists) {
+      return res.status(401).json({
+        error: 'Agent not mapped',
+        message: `Agent ${agentId} exists but is not mapped to any tenant`,
+        hint: 'An administrator needs to create an agent mapping for this agent_id',
+        agentInfo: {
+          agent_id: agentData.agent_id,
+          name: agentData.name,
+        }
+      });
+    } else {
       return res.status(404).json({
-        error: 'No ElevenLabs credentials configured',
-        hint: 'Configure ElevenLabs API key first: POST /api/credentials/elevenlabs'
+        error: 'Agent not found',
+        message: `Agent ${agentId} not found in agent mappings`,
+        hint: 'Verify the agent_id is correct and exists'
       });
     }
-
-    // Try to find which tenant owns this agent
-    for (const credential of credentials) {
-      try {
-        const isValid = await verifyAgentOwnership(agentId, credential.encryptedValue);
-        
-        if (isValid) {
-          const tenantId = credential.user.tenantId;
-          console.log(`✅ Agent ${agentId} verified for tenant ${tenantId}`);
-          
-          // Get agent details from ElevenLabs
-          const response = await axios.get(
-            'https://api.elevenlabs.io/v1/convai/agents',
-            {
-              headers: { 'xi-api-key': credential.encryptedValue }
-            }
-          );
-          
-          const agents = response.data.agents || response.data || [];
-          const agentData = agents.find((a: any) => a.agent_id === agentId);
-
-          // Create or update agent in database
-          if (!agentBot) {
-            console.log(`🤖 Auto-creating agent bot for ${agentId}...`);
-            agentBot = await prisma.agentBot.create({
-              data: {
-                name: agentData?.name || `Agent ${agentId.slice(-8)}`,
-                elevenLabsAgentId: agentId,
-                elevenLabsVoiceId: agentData?.voice_id,
-                persona: agentData?.prompt,
-                tenantId: tenantId,
-              }
-            });
-          }
-
-          // Set agent info for the request
-          req.agent = {
-            id: agentBot.id,
-            elevenLabsAgentId: agentBot.elevenLabsAgentId || agentId,
-            tenantId: agentBot.tenantId,
-            name: agentBot.name
-          };
-
-          console.log(`✅ Agent ${agentId} authenticated for tenant ${tenantId}`);
-          return next();
-        }
-      } catch (error: any) {
-        console.log(`❌ Failed to verify agent for tenant ${credential.user.tenantId}:`, error.message);
-        continue;
-      }
-    }
-
-    // Agent not found in any account
-    return res.status(401).json({
-      error: 'Agent not authorized',
-      message: `Agent ${agentId} not found in any configured ElevenLabs account`,
-      hint: 'Ensure the agent exists in your ElevenLabs account and credentials are configured'
-    });
 
   } catch (error: any) {
     console.error('❌ Agent authentication error:', error);

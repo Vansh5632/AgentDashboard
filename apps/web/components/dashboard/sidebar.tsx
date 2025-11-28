@@ -11,7 +11,8 @@ import {
   Settings,
   LogOut,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  GitBranch
 } from "lucide-react";
 import { useState } from "react";
 import { useAuthStore } from "@/lib/store";
@@ -23,6 +24,7 @@ const navItems = [
   { name: "Calls", href: "/dashboard/calls", icon: Phone },
   { name: "Meetings", href: "/dashboard/meetings", icon: Calendar },
   { name: "Agents", href: "/dashboard/agents", icon: Bot },
+  { name: "Agent Mappings", href: "/dashboard/agent-mappings", icon: GitBranch },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 

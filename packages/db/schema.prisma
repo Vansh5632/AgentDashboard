@@ -21,6 +21,7 @@ model Tenant {
   callLogs  CallLog[]   // All call logs belong to a tenant
   meetingCredentials MeetingCredential? // One set of meeting credentials per tenant
   meetings  Meeting[]   // All meetings belong to a tenant
+  agentMappings AgentMapping[] // Agent ID to tenant mappings
 
   @@index([createdAt])
 }
@@ -33,6 +34,7 @@ model User {
   tenantId      String
   tenant        Tenant       @relation(fields: [tenantId], references: [id])
   credentials   Credential[] // A user can have multiple credentials (e.g., Cal.com, GHL)
+  agentMappings AgentMapping[] // User's agent mappings
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
@@ -41,17 +43,17 @@ model User {
 }
 
 // 3. AgentBot Model: Stores the configuration for an AI agent.
-// Note: We only need the ElevenLabs API key - agent_id comes from webhooks
+// Note: We only need the API key - agent_id comes from webhooks or is directly provided
 model AgentBot {
   id         String   @id @default(cuid())
   name       String
-  elevenLabsAgentId String? @unique // ElevenLabs agent ID (auto-populated from webhook)
+  elevenLabsAgentId String? @unique // Agent ID (auto-populated from webhook)
   phoneNumber String?  @unique // The phone number (auto-populated from webhook)
-  agentPhoneNumberId String? // ElevenLabs phone number ID (auto-fetched from API)
+  agentPhoneNumberId String? // Phone number ID (auto-fetched from API)
   tenantId   String
   tenant     Tenant   @relation(fields: [tenantId], references: [id])
   
-  // These are now optional since config is in ElevenLabs
+  // These are now optional since config is managed externally
   persona    String?  @db.Text // Optional: local copy of persona
   elevenLabsVoiceId String? // Optional: voice ID if needed locally
   
@@ -80,7 +82,7 @@ model Credential {
 // 5. CallLog Model: Stores data for each call made.
 model CallLog {
   id            String   @id @default(cuid())
-  conversationId String   @unique // From ElevenLabs
+  conversationId String   @unique // From voice AI provider
   status        String   // e.g., "COMPLETED", "FAILED", "NO_PICKUP", "CALLBACK_NEEDED", "CALLBACK_SCHEDULED", "CALLBACK_COMPLETED"
   summary       String?  @db.Text
   transcript    String?  @db.Text
@@ -89,18 +91,18 @@ model CallLog {
   
   // Callback-related fields
   customerPhoneNumber String?  // Phone number to call back
-  agentId       String?        // Which agent should make the callback (ElevenLabs agent_id)
+  agentId       String?        // Which agent should make the callback (agent_id)
   agentPhoneNumber String?     // Original agent phone number used for the call
-  agentPhoneNumberId String?   // ElevenLabs phone number ID for outbound calls
+  agentPhoneNumberId String?   // Phone number ID for outbound calls
   callbackRequested Boolean  @default(false) // Was a callback requested?
   callbackScheduledAt DateTime? // When to make the callback
   callbackReason String?  @db.Text // Why callback is needed
   callbackAttempts Int     @default(0) // How many callback attempts made
   callbackCompletedAt DateTime? // When callback was successfully completed
   
-  // Additional ElevenLabs metadata
-  leadStatus    String?        // Lead status from ElevenLabs analysis
-  finalState    String?        // Final FSM state from ElevenLabs
+  // Additional metadata from voice AI analysis
+  leadStatus    String?        // Lead status from voice AI analysis
+  finalState    String?        // Final FSM state from voice AI
   callDuration  Int?           // Call duration in seconds
   
   createdAt     DateTime @default(now())
@@ -182,4 +184,24 @@ model Meeting {
   @@index([customerEmail])
   @@index([customerPhoneNumber])
   @@index([whatsappSent])
+}
+
+// 8. AgentMapping Model: Maps agent_id to tenants
+// This allows multiple tenants to share a single API key
+// while keeping their agents separate
+model AgentMapping {
+  id            String   @id @default(cuid())
+  agentId       String   @unique // Agent ID (e.g., "agent_2601k805...")
+  agentName     String?  // Friendly name for the agent
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId        String   // User who created this mapping
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notes         String?  @db.Text // Optional notes about this agent
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([agentId])
+  @@index([tenantId])
+  @@index([userId])
 }

@@ -104,6 +104,17 @@ export const agentsApi = {
   testAuth: (agentId: string) => api.post('/agents/test-auth', { agentId }),
 };
 
+// Agent Mappings API
+export const agentMappingsApi = {
+  getAll: () => api.get('/agent-mappings'),
+  create: (data: { agentId: string; agentName?: string; notes?: string }) =>
+    api.post('/agent-mappings', data),
+  update: (agentId: string, data: { agentName?: string; notes?: string }) =>
+    api.put(`/agent-mappings/${agentId}`, data),
+  delete: (agentId: string) => api.delete(`/agent-mappings/${agentId}`),
+  getAvailableAgents: () => api.get('/agent-mappings/available-agents'),
+};
+
 // Calls API
 export const callsApi = {
   getAll: (params?: {

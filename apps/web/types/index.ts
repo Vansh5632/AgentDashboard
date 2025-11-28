@@ -89,6 +89,24 @@ export interface ElevenLabsAgent {
   prompt: string;
   inDatabase?: boolean;
   dbId?: string | null;
+  isMapped?: boolean;
+  isMappedToCurrentTenant?: boolean;
+  isMappedToOtherTenant?: boolean;
+}
+
+export interface AgentMapping {
+  id: string;
+  agentId: string;
+  agentName: string | null;
+  tenantId: string;
+  userId: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  user?: {
+    id: string;
+    email: string;
+  };
 }
 
 export interface Stats {
