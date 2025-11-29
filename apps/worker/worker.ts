@@ -576,6 +576,7 @@ const meetingWorker = new Worker('meeting-processing', async (job: Job) => {
         name: customerInfo?.name || 'Unknown Customer',
         email: customerInfo?.email || 'unknown@placeholder.local',
         phone: customerInfo?.phone || '',
+        attendeePhoneNumber: customerInfo?.phone || '', // Required by Cal.com event type
         notes: customerInfo?.notes || '',
         // Add any additional fields Cal.com might expect
         guests: [],
