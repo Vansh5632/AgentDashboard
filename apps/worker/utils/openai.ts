@@ -355,10 +355,9 @@ Respond with JSON:
         // Create a new date in Singapore timezone
         const sgTime = new Date(result.datetime);
         parsedDate = singaporeToUTC(sgTime);
-      } else if (result.datetime.includes('+08:00')) {
-        // Convert Singapore time to UTC for storage
-        parsedDate = singaporeToUTC(parsedDate);
       }
+      // If AI returned ISO string with timezone (+08:00 or Z), Date constructor already converted to UTC
+      // No additional conversion needed!
       
       // Validate the date is in the future and reasonable (within 30 days)
       const now = new Date();
@@ -391,18 +390,22 @@ export async function parseCallbackTime(timeString: string | null | undefined): 
     return null;
   }
 
+  const cleanedTimeString = timeString.trim();
+  console.log(`🕐 parseCallbackTime called with: "${cleanedTimeString}"`);
+
   try {
     // First try to parse as ISO date
-    if (timeString.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/) || timeString.includes('T')) {
-      const isoDate = new Date(timeString);
+    console.log(`🔍 Step 1: Checking if ISO date format...`);
+    if (cleanedTimeString.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/) || cleanedTimeString.includes('T')) {
+      const isoDate = new Date(cleanedTimeString);
       if (!isNaN(isoDate.getTime()) && isoDate > new Date()) {
         // Check if it's already in UTC (ends with Z)
-        if (timeString.endsWith('Z')) {
+        if (cleanedTimeString.endsWith('Z')) {
           console.log(`✅ parseCallbackTime: Parsed as UTC ISO date: ${isoDate.toISOString()}`);
           return isoDate;
         }
         // Check if it has Singapore timezone (+08:00)
-        else if (timeString.includes('+08:00')) {
+        else if (cleanedTimeString.includes('+08:00')) {
           // The parsed date is already correct, but we need to adjust for the timezone interpretation
           // Since it's +08:00, subtract 8 hours to get UTC
           const utcDate = new Date(isoDate.getTime() - 8 * 60 * 60 * 1000);
@@ -414,26 +417,30 @@ export async function parseCallbackTime(timeString: string | null | undefined): 
           console.log(`✅ parseCallbackTime: Parsed as ISO date: ${isoDate.toISOString()}`);
           return isoDate;
         }
+      } else {
+        console.log(`⚠️ ISO date parse resulted in invalid or past date`);
       }
+    } else {
+      console.log(`ℹ️ Not an ISO date format, trying regex patterns...`);
     }
 
-    console.log(`🔄 parseCallbackTime: Trying regex parsing first for: "${timeString}"`);
+    console.log(`🔍 Step 2: Trying regex parsing for: "${cleanedTimeString}"`);
     
     // Try simple regex patterns first (faster and more reliable for relative times)
-    const simpleTime = parseSimpleTimePatterns(timeString);
+    const simpleTime = parseSimpleTimePatterns(cleanedTimeString);
     if (simpleTime) {
-      console.log(`✅ parseCallbackTime: Parsed with regex: ${simpleTime.toISOString()}`);
+      console.log(`✅ parseCallbackTime: Successfully parsed with regex: ${simpleTime.toISOString()}`);
       return simpleTime;
     }
 
-    console.log(`🔄 parseCallbackTime: Regex failed, trying AI parsing for: "${timeString}"`);
+    console.log(`🔍 Step 3: Regex failed, trying AI parsing for: "${cleanedTimeString}"`);
     
     // Only use AI for complex time expressions that regex can't handle
-    const aiParsed = await parseTimeWithAI(timeString);
+    const aiParsed = await parseTimeWithAI(cleanedTimeString);
     if (aiParsed) {
-      console.log(`✅ parseCallbackTime: AI parsed: ${aiParsed.toISOString()}`);
+      console.log(`✅ parseCallbackTime: AI successfully parsed: ${aiParsed.toISOString()}`);
     } else {
-      console.log(`❌ parseCallbackTime: AI failed to parse: "${timeString}"`);
+      console.log(`❌ parseCallbackTime: ALL parsing methods failed for: "${cleanedTimeString}"`);
     }
     return aiParsed;
   } catch (error) {
@@ -452,8 +459,52 @@ function parseSimpleTimePatterns(timeString: string): Date | null {
   
   console.log(`🕐 parseSimpleTimePatterns: Current Singapore time: ${toSingaporeTimeString(singaporeNow)}`);
   
-  // Enhanced pattern: "5 minutes", "30 mins", "2 hours", "call back me in 5 minutes", etc.
-  // Simple pattern that captures any number followed by time unit
+  // Pattern 1: Time with SGT timezone - "18:21 SGT", "06:21 PM SGT", "2025-11-29 18:21 SGT", "2025-11-29 06:21 PM SGT"
+  const sgtTimeMatch = timeString.match(/(\d{4}-\d{2}-\d{2})?[\s\-]*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm|AM|PM)?\s*(?:SGT|sgt)?/i);
+  if (sgtTimeMatch) {
+    const dateStr = sgtTimeMatch[1]; // Optional date
+    let hours = parseInt(sgtTimeMatch[2]);
+    const minutes = parseInt(sgtTimeMatch[3]);
+    const seconds = sgtTimeMatch[4] ? parseInt(sgtTimeMatch[4]) : 0;
+    const ampm = sgtTimeMatch[5]?.toLowerCase();
+    
+    // Convert 12-hour to 24-hour format
+    if (ampm === 'pm' && hours !== 12) {
+      hours += 12;
+    } else if (ampm === 'am' && hours === 12) {
+      hours = 0;
+    }
+    
+    console.log(`🕐 Matched SGT time format: ${hours}:${minutes}:${seconds} ${ampm || '24h'}`);
+    
+    // Create date in Singapore timezone
+    let targetSGT = new Date(singaporeNow);
+    
+    if (dateStr) {
+      // Specific date provided
+      const [year, month, day] = dateStr.split('-').map(Number);
+      targetSGT = new Date(year, month - 1, day, hours, minutes, seconds);
+      console.log(`📅 Using provided date: ${dateStr}`);
+    } else {
+      // Today's date with specified time
+      targetSGT.setHours(hours, minutes, seconds, 0);
+      
+      // If the time is in the past, assume it's tomorrow
+      if (targetSGT <= singaporeNow) {
+        targetSGT.setDate(targetSGT.getDate() + 1);
+        console.log(`⏭️ Time is in past, using tomorrow`);
+      }
+    }
+    
+    console.log(`📅 Target SGT time: ${toSingaporeTimeString(targetSGT)}`);
+    
+    // Convert to UTC
+    const utcTime = singaporeToUTC(targetSGT);
+    console.log(`🌐 Converted to UTC: ${utcTime.toISOString()}`);
+    return utcTime;
+  }
+  
+  // Pattern 2: Relative time - "5 minutes", "30 mins", "2 hours", "in 5 minutes", etc.
   const relativeMatch = lowerTime.match(/(\d+)\s*(minute|minutes|mins?|hour|hours?)/i);
   if (relativeMatch) {
     const amount = parseInt(relativeMatch[1]);
@@ -478,7 +529,7 @@ function parseSimpleTimePatterns(timeString: string): Date | null {
     return futureUTCTime;
   }
   
-  // Pattern: "tomorrow", "next week", etc.
+  // Pattern 3: "tomorrow", "next week", etc.
   if (lowerTime.includes('tomorrow')) {
     // Create tomorrow in Singapore timezone
     const tomorrow = new Date(singaporeNow);
