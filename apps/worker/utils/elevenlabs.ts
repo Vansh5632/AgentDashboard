@@ -11,21 +11,16 @@ const BUSINESS_HOURS_START = 9; // 9 AM
 const BUSINESS_HOURS_END = 21; // 9 PM (21:00 in 24-hour format)
 
 /**
- * Retrieve ElevenLabs API key from database for a given tenant
+ * Retrieve ElevenLabs API key from environment variables
  */
-async function getElevenLabsApiKey(tenantId: string): Promise<string> {
-  const credential = await prisma.credential.findFirst({
-    where: { 
-      serviceName: 'ELEVENLABS',
-      user: { tenantId }
-    }
-  });
-
-  if (!credential) {
-    throw new Error(`ElevenLabs API key not configured for tenant ${tenantId}. Please configure the API key in the dashboard.`);
+function getElevenLabsApiKey(): string {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  
+  if (!apiKey) {
+    throw new Error('ELEVENLABS_API_KEY not found in environment variables');
   }
 
-  return credential.encryptedValue;
+  return apiKey;
 }
 
 interface CallbackRequest {
@@ -55,7 +50,7 @@ interface PhoneNumber {
  */
 export async function fetchElevenLabsPhoneNumbers(tenantId: string): Promise<PhoneNumber[]> {
   try {
-    const apiKey = await getElevenLabsApiKey(tenantId);
+    const apiKey = getElevenLabsApiKey();
 
     console.log('📞 Fetching phone numbers from ElevenLabs...');
 
@@ -186,9 +181,10 @@ export async function initiateCallbackCall({
   tenantId
 }: CallbackRequest): Promise<ElevenLabsOutboundResponse> {
   try {
-    const apiKey = await getElevenLabsApiKey(tenantId);
+    const apiKey = getElevenLabsApiKey();
 
     console.log(`📞 Initiating callback to ${customerPhoneNumber} with agent ${agentId}`);
+    console.log('🔑 Using ElevenLabs API key from environment variables');
 
     // Get phone number ID if not provided
     let phoneNumberId = agentPhoneNumberId;
@@ -267,7 +263,7 @@ export async function initiateCallbackCall({
  */
 export async function getConversationStatus(conversationId: string, tenantId: string): Promise<any> {
   try {
-    const apiKey = await getElevenLabsApiKey(tenantId);
+    const apiKey = getElevenLabsApiKey();
 
     const response = await axios.get(
       `https://api.elevenlabs.io/v1/convai/conversation/${conversationId}`,
